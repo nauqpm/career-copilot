@@ -102,13 +102,19 @@ This keeps token use deliberate: pasting and browsing are free local operations;
 - A test fixture must show that the base profile stays unchanged after a job-specific CV draft is created.
 - Slice reports record files changed, tests run, known limitations, and the next manual Codex command/workflow.
 
-## 8. Deferred: automation and company research
+## 8. Per-slice planning and approval
+
+This document is the shared architecture, not permission to implement all three slices at once. Before code begins for each slice, create a dedicated implementation plan on that slice's branch. The plan must state the files it owns, data/schema changes, user flow, tests, acceptance criteria, migration/compatibility behavior, and report path.
+
+The user reviews and approves the individual plan before implementation starts. Finishing one slice does not automatically authorize implementation of the next one; the next slice begins only after its plan is reviewed and approved.
+
+## 9. Deferred: automation and company research
 
 Future automation may use n8n or another orchestrator to collect public JD/company information after the user asks for it. It is intentionally out of scope for Slices 2–4.
 
 The stable future boundary is an ingestion adapter that produces a source-labelled raw record in the same job directory. Any automation must preserve source URLs and retrieval time, must not overwrite user-pasted source text, and must treat company claims as unverified until their source is recorded. Credentials, scraping policy, rate limits, and consent are later design decisions.
 
-## 9. Non-goals
+## 10. Non-goals
 
 - No hosted database, accounts, remote storage, or multi-user features.
 - No AI chat embedded in the web app and no API key.

@@ -1,0 +1,9 @@
+node_modules/
+.pnpm-store/
+dist/
+data/raw/*
+!data/raw/.gitkeep
+data/analysis/*
+!data/analysis/.gitkeep
+fixtures/real-jobs/*
+!fixtures/real-jobs/.gitkeep

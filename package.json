@@ -1,0 +1,19 @@
+{
+  "name": "career-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "test": "tsx --test tests/job-input.test.ts"
+  },
+  "bin": {
+    "career": "./dist/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  }
+}

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
+    "web": "tsx src/web/server.ts",
     "test": "tsx --test tests/job-input.test.ts tests/profile.test.ts tests/decision.test.ts tests/workspace.test.ts"
   },
   "bin": {

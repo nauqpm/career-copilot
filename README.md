@@ -57,3 +57,22 @@ Use `skills/assess-job/SKILL.md` in Codex with one validated JobAnalysis and the
 ```bash
 pnpm dev decision validate ./draft-decision.json --out ./data/jobs/<job-id>/decision.json
 ```
+
+## Local workspace
+
+Start the browser app:
+
+```bash
+pnpm web
+```
+
+Open [http://127.0.0.1:4242](http://127.0.0.1:4242). The app runs only on your computer. Paste a JD and optionally label its source; the app creates a separate ignored folder at `data/jobs/<job-id>/` with `source.md` and `raw.json`.
+
+You can also edit the base profile and optionally store a private `.txt` or `.md` CV source from the browser. The normal workflow is:
+
+1. Paste a job and save your base profile locally.
+2. Ask Codex to follow `skills/analyze-job/SKILL.md` for that job's `raw.json`, then save a validated `analysis.json` in the same job folder.
+3. Ask Codex to follow `skills/assess-job/SKILL.md` with that analysis and `data/profile/candidate-profile.json`, then save `decision.json` and, when appropriate, `cv-draft.md` beside it.
+4. Return to the browser and use **Refresh Codex files**. It shows readable role facts, decision evidence, and a Markdown download when a CV draft exists.
+
+The browser does not send data to an AI provider, embed a chat, scrape jobs, research companies, track applications, or create PDF/DOCX files. Future automation must preserve the original pasted source, record the source URL and retrieval time, and stay opt-in.

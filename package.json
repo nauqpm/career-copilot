@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
-    "test": "tsx --test tests/job-input.test.ts tests/profile.test.ts"
+    "test": "tsx --test tests/job-input.test.ts tests/profile.test.ts tests/decision.test.ts"
   },
   "bin": {
     "career": "./dist/cli.js"

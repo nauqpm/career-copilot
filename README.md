@@ -49,3 +49,11 @@ pnpm dev profile validate ./draft-profile.json --out ./data/profile/candidate-pr
 ```
 
 The base profile stores work history, skills, education, languages, contact details, and job-search constraints such as location, arrangement, and minimum salary. It is not a tailored CV and must not be overwritten for a particular job.
+
+## Job decision and CV draft
+
+Use `skills/assess-job/SKILL.md` in Codex with one validated JobAnalysis and the base profile. It creates a separate decision for that job: `consider`, `clarify`, or `not-ready`; it does not use a fit percentage. A job-specific `cv-draft.md` is created only when the decision recommends it, and never replaces the base profile.
+
+```bash
+pnpm dev decision validate ./draft-decision.json --out ./data/jobs/<job-id>/decision.json
+```

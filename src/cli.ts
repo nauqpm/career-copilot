@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { type JobBatchResolution, resolveJobInput, resolveJobInputsInDirectory } from "./job/resolve-input.js";
 import { parseJobAnalysis } from "./job/schema.js";
 import { parseCandidateProfile } from "./profile/schema.js";
+import { parseJobDecision } from "./decision/schema.js";
 
 export type CliIo = {
   writeStdout: (chunk: string) => void;
@@ -31,6 +32,7 @@ const usage = [
   "  career job analyze --stdin [--out path]",
   "  career job validate-analysis <analysis.json> [--out path]",
   "  career profile validate <profile.json> [--out path]",
+  "  career decision validate <decision.json> [--out path]",
 ].join("\n");
 
 if (isDirectExecution(import.meta.url, process.argv[1])) {
@@ -55,6 +57,7 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
       if (command === "validate-analysis") return await validateAnalysis(input, options, io);
     }
     if (group === "profile" && command === "validate") return await validateProfile(input, options, io);
+    if (group === "decision" && command === "validate") return await validateDecision(input, options, io);
 
     io.writeStderr(`${usage}\n`);
     return 1;
@@ -90,6 +93,14 @@ async function validateProfile(path: string | undefined, options: string[], io: 
   if (!path) throw new Error("Profile JSON path is required");
   const output = optionValue(options, "--out");
   const parsed = parseCandidateProfile(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
+  await outputJson(parsed, output, io);
+  return 0;
+}
+
+async function validateDecision(path: string | undefined, options: string[], io: CliIo) {
+  if (!path) throw new Error("Decision JSON path is required");
+  const output = optionValue(options, "--out");
+  const parsed = parseJobDecision(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
   await outputJson(parsed, output, io);
   return 0;
 }

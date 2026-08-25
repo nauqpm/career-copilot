@@ -1,6 +1,6 @@
 # Career Copilot — Slices 2–4 Design
 
-**Status:** Proposed for user review
+**Status:** Accepted
 **Date:** 2026-08-25
 **Decider:** quanp
 
@@ -66,7 +66,7 @@ Branch: `slice-2-candidate-profile`, from `main`.
 
 - Define and validate `CandidateProfile`: contact details, headline, summary, work history, skills, education, languages, certifications, links, and job preferences/constraints.
 - Add local CLI validation and a Codex skill for reading a profile source `.txt`/`.md` when the user wants Codex to help structure it.
-- Create a base profile form and `.txt`/`.md` import route in the browser app.
+- Define the local profile-source file convention consumed later by the browser app.
 - Report: `reports/slice-2-candidate-profile.md`.
 
 ### Slice 3 — Job decision and CV draft
@@ -84,7 +84,7 @@ Branch: `slice-4-local-workspace`, from Slice 3.
 
 - Add the localhost browser application and local server.
 - Let the user paste a JD, provide a source label/URL when known, and save it locally.
-- Provide a dashboard, job list, readable job detail screen, profile editor, decision screen, CV-draft preview, and Markdown download.
+- Provide a dashboard, job list, readable job detail screen, profile editor with `.txt`/`.md` import, decision screen, CV-draft preview, and Markdown download.
 - Present structured information in normal UI sections; JSON is internal and not a day-to-day user surface.
 - Report: `reports/slice-4-local-workspace.md`.
 
@@ -104,9 +104,9 @@ This keeps token use deliberate: pasting and browsing are free local operations;
 
 ## 8. Per-slice planning and approval
 
-This document is the shared architecture, not permission to implement all three slices at once. Before code begins for each slice, create a dedicated implementation plan on that slice's branch. The plan must state the files it owns, data/schema changes, user flow, tests, acceptance criteria, migration/compatibility behavior, and report path.
+This document is the shared architecture. Before code begins, create one dedicated implementation plan for each slice. Each plan must state the files it owns, data/schema changes, user flow, tests, acceptance criteria, migration/compatibility behavior, and report path.
 
-The user reviews and approves the individual plan before implementation starts. Finishing one slice does not automatically authorize implementation of the next one; the next slice begins only after its plan is reviewed and approved.
+The user may approve the complete plan set in one decision. When approved, implementation still proceeds sequentially: Slice 3 branches from the completed Slice 2 branch, and Slice 4 branches from the completed Slice 3 branch. Each slice remains independently reviewable through its report and scoped commits.
 
 ## 9. Deferred: automation and company research
 

@@ -189,6 +189,74 @@ test("rejects empty pasted JD", async () => {
   }
 });
 
+test("returns null for an existing job without a saved note", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+  const app = await startTestServer(root);
+
+  try {
+    const response = await fetch(`${app.url}/api/jobs/${job.id}/note`);
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /^application\/json/);
+    assert.deepEqual(await response.json(), { content: null });
+  } finally {
+    await app.close();
+  }
+});
+
+test("saves and returns an existing job note through localhost", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+  const app = await startTestServer(root);
+  const content = "Ask about the on-call rotation.";
+
+  try {
+    const saved = await putJson(app.url, `/api/jobs/${job.id}/note`, { content });
+    assert.equal(saved.status, 200);
+    assert.match(saved.headers.get("content-type") ?? "", /^application\/json/);
+    assert.deepEqual(await saved.json(), { content });
+
+    const read = await fetch(`${app.url}/api/jobs/${job.id}/note`);
+    assert.equal(read.status, 200);
+    assert.deepEqual(await read.json(), { content });
+  } finally {
+    await app.close();
+  }
+});
+
+test("rejects invalid local note requests without creating job artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+  const missingId = "job-does-not-exist";
+  const app = await startTestServer(root);
+
+  try {
+    const invalidRequests = [
+      putJson(app.url, `/api/jobs/${job.id}/note`, { content: "  " }),
+      putJson(app.url, `/api/jobs/${job.id}/note`, { content: 42 }),
+      fetch(`${app.url}/api/jobs/${job.id}/note`, {
+        method: "PUT",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ content: "A note" }),
+      }),
+    ];
+
+    for (const response of await Promise.all(invalidRequests)) {
+      assert.equal(response.status, 400);
+      assert.match(response.headers.get("content-type") ?? "", /^application\/json/);
+      assert.deepEqual(await response.json(), { error: "The supplied local data is invalid." });
+    }
+    const missing = await putJson(app.url, `/api/jobs/${missingId}/note`, { content: "A note" });
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: "Not found" });
+    await assert.rejects(() => stat(join(root, "data", "jobs", missingId)));
+    await assert.rejects(() => stat(join(root, "data", "jobs", job.id, "notes.md")));
+  } finally {
+    await app.close();
+  }
+});
+
 async function startTestServer(root: string) {
   const server = createWorkspaceServer({ root, port: 0 });
   server.listen(0, "127.0.0.1");
@@ -203,6 +271,14 @@ async function startTestServer(root: string) {
 function postJson(url: string, path: string, body: unknown) {
   return fetch(`${url}${path}`, {
     method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function putJson(url: string, path: string, body: unknown) {
+  return fetch(`${url}${path}`, {
+    method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });

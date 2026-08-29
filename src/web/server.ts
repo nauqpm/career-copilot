@@ -9,6 +9,8 @@ import {
   getCvDraftPath,
   listWorkspaceJobs,
   readWorkspaceJob,
+  readWorkspaceJobNote,
+  saveWorkspaceJobNote,
 } from "../workspace/storage.js";
 
 const maxJsonBytes = 1024 * 1024;
@@ -59,6 +61,17 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
 
     const draftMatch = path.match(/^\/api\/jobs\/([^/]+)\/cv-draft$/);
     if (method === "GET" && draftMatch) return sendCvDraft(response, root, decodeURIComponent(draftMatch[1]!));
+    const noteMatch = path.match(/^\/api\/jobs\/([^/]+)\/note$/);
+    if (method === "GET" && noteMatch) {
+      const content = await readWorkspaceJobNote(root, decodeURIComponent(noteMatch[1]!));
+      return sendJson(response, 200, { content: content ?? null });
+    }
+    if (method === "PUT" && noteMatch) {
+      const body = await readJsonBody(request);
+      const id = decodeURIComponent(noteMatch[1]!);
+      await saveWorkspaceJobNote(root, id, noteInput(body));
+      return sendJson(response, 200, { content: await readWorkspaceJobNote(root, id) });
+    }
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
     if (method === "GET" && jobMatch) return sendJson(response, 200, await readWorkspaceJob(root, decodeURIComponent(jobMatch[1]!)));
 
@@ -123,6 +136,11 @@ function pastedJobInput(value: unknown): { content: string; sourceReference?: st
   return { content: value.content, ...(value.sourceReference === undefined ? {} : { sourceReference: value.sourceReference }) };
 }
 
+function noteInput(value: unknown): string {
+  if (!isRecord(value) || typeof value.content !== "string") throw new InputError("Note content is required");
+  return value.content;
+}
+
 function sendJson(response: ServerResponse, status: number, body?: unknown): void {
   if (status === 204) {
     response.writeHead(204).end();
@@ -141,6 +159,7 @@ function sendError(response: ServerResponse, error: unknown): void {
   if (error instanceof InputError || error instanceof SyntaxError || isValidationError(error)) {
     return sendJson(response, 400, { error: "The supplied local data is invalid." });
   }
+  if (isMissingJobError(error)) return sendJson(response, 404, { error: "Not found" });
   if (isNodeError(error, "ENOENT")) return sendJson(response, 404, { error: "Not found" });
   return sendJson(response, 500, { error: "Unable to process the local request." });
 }
@@ -164,6 +183,10 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
 
 function isValidationError(error: unknown): boolean {
   return error instanceof Error && /must |is invalid|must not|non-empty|unsupported|empty/i.test(error.message);
+}
+
+function isMissingJobError(error: unknown): boolean {
+  return error instanceof Error && error.message === "job does not exist";
 }
 
 class InputError extends Error {}

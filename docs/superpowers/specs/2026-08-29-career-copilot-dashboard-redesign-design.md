@@ -1,6 +1,6 @@
 # Career Copilot Dashboard Redesign
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-29
 **Decider:** quanp
 **Design companion:** `career-copilot-page-map.html`

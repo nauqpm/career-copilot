@@ -346,10 +346,10 @@ Use CSS custom properties scoped at `:root` for this fixed palette:
 
 ```css
 :root {
-  --canvas: #151716;
-  --panel: #1d211f;
-  --panel-raised: #242925;
-  --line: #343c36;
+  --canvas: #0d1012;
+  --panel: #121618;
+  --panel-raised: #131719;
+  --line: #2a3033;
   --text: #eef0eb;
   --muted: #a6aca3;
   --sage: #9faf8b;
@@ -408,7 +408,7 @@ Create `reports/dashboard-redesign.md` with:
 
 Before the documentation commit:
 
-1. Run `pnpm test` and `pnpm build` again after all final edits.
+1. Run `pnpm test`, `pnpm build`, and `pnpm audit` again after all final edits.
 2. Inspect `git diff --check` for whitespace errors.
 3. Inspect the staged file list so it contains no `data/` artifacts, credentials, or unrelated files.
 4. Review route/API code for path traversal, unescaped HTML, malformed JSON, oversized bodies, and accidental external requests.

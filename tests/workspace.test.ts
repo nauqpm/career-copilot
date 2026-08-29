@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createPastedJob, listWorkspaceJobs, readWorkspaceJob } from "../src/workspace/storage.js";
+import {
+  createPastedJob,
+  listWorkspaceJobs,
+  readWorkspaceJob,
+  readWorkspaceJobNote,
+  saveWorkspaceJobNote,
+} from "../src/workspace/storage.js";
 import { createWorkspaceServer } from "../src/web/server.js";
 
 test("creates a local job from pasted text and preserves source Markdown", async () => {
@@ -27,6 +33,69 @@ test("lists an unanalyzed job without exposing raw JSON", async () => {
   const [job] = await listWorkspaceJobs(root);
   assert.equal(job?.hasAnalysis, false);
   assert.equal("raw" in (job ?? {}), false);
+});
+
+test("lists artifact status and latest local update time", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+  const directory = join(root, "data", "jobs", job.id);
+  const sourcePath = join(directory, "source.md");
+  const rawPath = join(directory, "raw.json");
+  const analysisPath = join(directory, "analysis.json");
+  const cvDraftPath = join(directory, "cv-draft.md");
+  const sourceTime = new Date("2026-01-01T09:00:00.000Z");
+  const rawTime = new Date("2026-01-01T10:00:00.000Z");
+  const analysisTime = new Date("2026-01-02T09:00:00.000Z");
+  const cvDraftTime = new Date("2026-01-03T09:00:00.000Z");
+
+  await writeFile(analysisPath, JSON.stringify({
+    title: "Backend Engineer",
+    company: "Acme",
+    requirements: [],
+    responsibilities: [],
+    employment: {
+      type: "full-time",
+      workArrangement: "hybrid",
+      locations: [{ raw: "Ho Chi Minh City" }],
+    },
+    compensation: { salaryStatus: "not-stated" },
+  }));
+  await writeFile(cvDraftPath, "Draft CV");
+  await utimes(sourcePath, sourceTime, sourceTime);
+  await utimes(rawPath, rawTime, rawTime);
+  await utimes(analysisPath, analysisTime, analysisTime);
+  await utimes(cvDraftPath, cvDraftTime, cvDraftTime);
+
+  const [summary] = await listWorkspaceJobs(root);
+
+  assert.deepEqual(summary?.artifactStatus, {
+    source: true,
+    analysis: true,
+    decision: false,
+    cvDraft: true,
+  });
+  assert.equal(summary?.updatedAt, "2026-01-03T09:00:00.000Z");
+  assert.equal(summary?.cvDraftUpdatedAt, "2026-01-03T09:00:00.000Z");
+  assert.equal(summary?.employmentType, "full-time");
+  assert.equal(summary?.workArrangement, "hybrid");
+  assert.equal(summary?.locationPreview, "Ho Chi Minh City");
+});
+
+test("stores and reads a non-empty note for an existing job", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+
+  await saveWorkspaceJobNote(root, job.id, "Ask about the on-call rotation.");
+
+  assert.equal(await readWorkspaceJobNote(root, job.id), "Ask about the on-call rotation.");
+});
+
+test("rejects blank notes and cannot create a note for a missing job", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+
+  await assert.rejects(() => saveWorkspaceJobNote(root, job.id, "   "));
+  await assert.rejects(() => saveWorkspaceJobNote(root, "does-not-exist", "text"));
 });
 
 test("rejects traversal-like job IDs", async () => {

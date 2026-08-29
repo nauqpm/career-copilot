@@ -2,20 +2,38 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { type JobDecision, type DecisionStatus, parseJobDecision } from "../decision/schema.js";
+import { type JobDecision, parseJobDecision } from "../decision/schema.js";
 import { type RawJobContent } from "../job/input.js";
-import { type JobAnalysis, parseJobAnalysis } from "../job/schema.js";
+import {
+  type EmploymentType,
+  type JobAnalysis,
+  type WorkArrangement,
+  parseJobAnalysis,
+} from "../job/schema.js";
 
-export type WorkspaceJobSummary = {
+export interface WorkspaceArtifactStatus {
+  source: boolean;
+  analysis: boolean;
+  decision: boolean;
+  cvDraft: boolean;
+}
+
+export interface WorkspaceJobSummary {
   id: string;
   sourcePreview: string;
   title?: string;
   company?: string;
-  decisionStatus?: DecisionStatus;
+  decisionStatus?: string;
   hasAnalysis: boolean;
   hasCvDraft: boolean;
   invalidDerivedData?: string;
-};
+  artifactStatus: WorkspaceArtifactStatus;
+  updatedAt: string;
+  cvDraftUpdatedAt?: string;
+  employmentType?: EmploymentType;
+  workArrangement?: WorkArrangement;
+  locationPreview?: string;
+}
 
 export type WorkspaceJobDetail = WorkspaceJobSummary & {
   raw: RawJobContent;
@@ -44,7 +62,7 @@ export async function createPastedJob(root: string, input: PastedJob): Promise<W
     writeAtomically(join(directory, "raw.json"), `${JSON.stringify(raw, null, 2)}\n`),
   ]);
 
-  return summaryFrom({ id, raw, hasAnalysis: false, hasCvDraft: false });
+  return readWorkspaceSummary(root, id);
 }
 
 export async function listWorkspaceJobs(root: string): Promise<WorkspaceJobSummary[]> {
@@ -56,16 +74,17 @@ export async function listWorkspaceJobs(root: string): Promise<WorkspaceJobSumma
     throw error;
   }
 
-  const ids = entries.filter((entry) => entry.isDirectory() && jobIdPattern.test(entry.name)).map((entry) => entry.name).sort().reverse();
-  return Promise.all(ids.map((id) => readWorkspaceSummary(root, id)));
+  const ids = entries.filter((entry) => entry.isDirectory() && jobIdPattern.test(entry.name)).map((entry) => entry.name);
+  const summaries = await Promise.all(ids.map((id) => readWorkspaceSummary(root, id)));
+  return summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
 }
 
 export async function readWorkspaceJob(root: string, id: string): Promise<WorkspaceJobDetail> {
   const directory = jobDirectory(root, id);
   const raw = parseRawJobContent(await readJson(join(directory, "raw.json")));
-  const derived = await readDerivedData(directory);
+  const [derived, artifactMetadata] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory)]);
   return {
-    ...summaryFrom({ id, raw, ...derived }),
+    ...summaryFrom({ id, raw, ...derived, ...artifactMetadata }),
     raw,
     ...derived,
   };
@@ -75,10 +94,31 @@ export function getCvDraftPath(root: string, id: string): string {
   return join(jobDirectory(root, id), "cv-draft.md");
 }
 
+export function getWorkspaceJobNotePath(root: string, id: string): string {
+  return join(jobDirectory(root, id), "notes.md");
+}
+
+export async function readWorkspaceJobNote(root: string, jobId: string): Promise<string | undefined> {
+  const directory = await requireExistingJobDirectory(root, jobId);
+  try {
+    return requireText(await readFile(join(directory, "notes.md"), "utf8"), "Note content");
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+export async function saveWorkspaceJobNote(root: string, jobId: string, content: string): Promise<void> {
+  const directory = await requireExistingJobDirectory(root, jobId);
+  const normalized = requireText(content, "Note content");
+  await writeAtomically(join(directory, "notes.md"), withFinalNewline(normalized));
+}
+
 async function readWorkspaceSummary(root: string, id: string): Promise<WorkspaceJobSummary> {
   const directory = jobDirectory(root, id);
   const raw = parseRawJobContent(await readJson(join(directory, "raw.json")));
-  return summaryFrom({ id, raw, ...(await readDerivedData(directory)) });
+  const [derived, artifactMetadata] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory)]);
+  return summaryFrom({ id, raw, ...derived, ...artifactMetadata });
 }
 
 async function readDerivedData(directory: string): Promise<{
@@ -112,6 +152,9 @@ function summaryFrom(input: {
   hasAnalysis: boolean;
   hasCvDraft: boolean;
   invalidDerivedData?: string;
+  artifactStatus: WorkspaceArtifactStatus;
+  updatedAt: string;
+  cvDraftUpdatedAt?: string;
 }): WorkspaceJobSummary {
   return {
     id: input.id,
@@ -122,7 +165,59 @@ function summaryFrom(input: {
     hasAnalysis: input.hasAnalysis,
     hasCvDraft: input.hasCvDraft,
     ...(input.invalidDerivedData === undefined ? {} : { invalidDerivedData: input.invalidDerivedData }),
+    artifactStatus: input.artifactStatus,
+    updatedAt: input.updatedAt,
+    ...(input.cvDraftUpdatedAt === undefined ? {} : { cvDraftUpdatedAt: input.cvDraftUpdatedAt }),
+    ...(input.analysis?.employment?.type === undefined ? {} : { employmentType: input.analysis.employment.type }),
+    ...(input.analysis?.employment?.workArrangement === undefined
+      ? {}
+      : { workArrangement: input.analysis.employment.workArrangement }),
+    ...(input.analysis?.employment?.locations?.[0] === undefined
+      ? {}
+      : { locationPreview: input.analysis.employment.locations[0].raw }),
   };
+}
+
+async function readWorkspaceArtifactMetadata(directory: string): Promise<{
+  artifactStatus: WorkspaceArtifactStatus;
+  updatedAt: string;
+  cvDraftUpdatedAt?: string;
+}> {
+  const artifacts = await Promise.all([
+    readArtifactStat(join(directory, "source.md")),
+    readArtifactStat(join(directory, "raw.json")),
+    readArtifactStat(join(directory, "analysis.json")),
+    readArtifactStat(join(directory, "decision.json")),
+    readArtifactStat(join(directory, "cv-draft.md")),
+    readArtifactStat(join(directory, "notes.md")),
+  ]);
+  const [source, raw, analysis, decision, cvDraft] = artifacts;
+  const newest = artifacts.reduce<Date | undefined>((latest, artifact) => {
+    if (artifact === undefined || (latest !== undefined && latest.getTime() >= artifact.getTime())) return latest;
+    return artifact;
+  }, undefined);
+
+  if (raw === undefined || newest === undefined) throw new Error("Raw job content is missing");
+
+  return {
+    artifactStatus: {
+      source: source !== undefined,
+      analysis: analysis !== undefined,
+      decision: decision !== undefined,
+      cvDraft: cvDraft !== undefined,
+    },
+    updatedAt: newest.toISOString(),
+    ...(cvDraft === undefined ? {} : { cvDraftUpdatedAt: cvDraft.toISOString() }),
+  };
+}
+
+async function readArtifactStat(path: string): Promise<Date | undefined> {
+  try {
+    return (await stat(path)).mtime;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
 }
 
 function optionalText(value: string | undefined, key: "title" | "company"): Partial<Record<typeof key, string>> {
@@ -183,6 +278,16 @@ function jobsDirectory(root: string): string {
 function jobDirectory(root: string, id: string): string {
   if (!jobIdPattern.test(id)) throw new Error("job id is invalid");
   return join(jobsDirectory(root), id);
+}
+
+async function requireExistingJobDirectory(root: string, id: string): Promise<string> {
+  const directory = jobDirectory(root, id);
+  try {
+    if ((await stat(directory)).isDirectory()) return directory;
+  } catch (error) {
+    if (!isNodeError(error, "ENOENT")) throw error;
+  }
+  throw new Error("job does not exist");
 }
 
 function requireText(value: string, field: string): string {

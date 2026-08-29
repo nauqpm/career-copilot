@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -90,6 +90,61 @@ test("stores and reads a non-empty note for an existing job", async () => {
   assert.equal(await readWorkspaceJobNote(root, job.id), "Ask about the on-call rotation.");
 });
 
+test("keeps a valid job visible when derived JSON is malformed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+  const directory = join(root, "data", "jobs", job.id);
+
+  await writeFile(join(directory, "analysis.json"), "{}");
+  await writeFile(join(directory, "decision.json"), "{}");
+
+  const [summary] = await listWorkspaceJobs(root);
+
+  assert.equal(summary?.id, job.id);
+  assert.equal(summary?.hasAnalysis, false);
+  assert.match(summary?.invalidDerivedData ?? "", /analysis\.json is invalid/);
+  assert.match(summary?.invalidDerivedData ?? "", /decision\.json is invalid/);
+  assert.deepEqual(summary?.artifactStatus, {
+    source: true,
+    analysis: true,
+    decision: true,
+    cvDraft: false,
+  });
+});
+
+test("uses a saved note as the latest workspace update", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+  const directory = join(root, "data", "jobs", job.id);
+  const earlier = new Date("2026-01-01T09:00:00.000Z");
+
+  await utimes(join(directory, "source.md"), earlier, earlier);
+  await utimes(join(directory, "raw.json"), earlier, earlier);
+  const [before] = await listWorkspaceJobs(root);
+  await saveWorkspaceJobNote(root, job.id, "Ask about the on-call rotation.");
+  const [after] = await listWorkspaceJobs(root);
+
+  assert.notEqual(after?.updatedAt, before?.updatedAt);
+  assert.equal(after?.updatedAt, (await stat(join(directory, "notes.md"))).mtime.toISOString());
+});
+
+test("sorts jobs by local update time and job ID ties", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const first = await createPastedJob(root, { content: "First role" });
+  const second = await createPastedJob(root, { content: "Second role" });
+  const latest = await createPastedJob(root, { content: "Latest role" });
+  const tiedTime = new Date("2026-01-01T09:00:00.000Z");
+  const latestTime = new Date("2026-01-02T09:00:00.000Z");
+
+  await setJobArtifactTimes(root, first.id, tiedTime);
+  await setJobArtifactTimes(root, second.id, tiedTime);
+  await setJobArtifactTimes(root, latest.id, latestTime);
+
+  const jobs = await listWorkspaceJobs(root);
+
+  assert.deepEqual(jobs.map((job) => job.id), [latest.id, ...[first.id, second.id].sort()]);
+});
+
 test("rejects blank notes and cannot create a note for a missing job", async () => {
   const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
   const job = await createPastedJob(root, { content: "Backend role" });
@@ -151,4 +206,10 @@ function postJson(url: string, path: string, body: unknown) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+async function setJobArtifactTimes(root: string, jobId: string, timestamp: Date): Promise<void> {
+  const directory = join(root, "data", "jobs", jobId);
+  await utimes(join(directory, "source.md"), timestamp, timestamp);
+  await utimes(join(directory, "raw.json"), timestamp, timestamp);
 }

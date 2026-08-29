@@ -250,6 +250,10 @@ test("rejects invalid local note requests without creating job artifacts", async
     const missing = await putJson(app.url, `/api/jobs/${missingId}/note`, { content: "A note" });
     assert.equal(missing.status, 404);
     assert.deepEqual(await missing.json(), { error: "Not found" });
+    const missingRead = await fetch(`${app.url}/api/jobs/${missingId}/note`);
+    assert.equal(missingRead.status, 404);
+    assert.match(missingRead.headers.get("content-type") ?? "", /^application\/json/);
+    assert.deepEqual(await missingRead.json(), { error: "Not found" });
     await assert.rejects(() => stat(join(root, "data", "jobs", missingId)));
     await assert.rejects(() => stat(join(root, "data", "jobs", job.id, "notes.md")));
   } finally {

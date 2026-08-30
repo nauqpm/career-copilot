@@ -234,6 +234,16 @@ test("CV library never labels a draft held from decision status alone", () => {
   assert.doesNotMatch(renderCvLibrary({ jobs: [jobSummary({ artifactStatus: { cvDraft: false } })] }), / download/);
 });
 
+test("detail labels a CV draft as held only for an explicit hold recommendation", () => {
+  const held = renderJobDetail({ ...populatedFixture(), decision: { ...populatedFixture().decision, cvDraftRecommendation: "hold" } });
+  assert.match(held, /Bản nháp CV: đang giữ\./);
+  for (const recommendation of [undefined, "unexpected"]) {
+    const html = renderJobDetail({ ...populatedFixture(), decision: { ...populatedFixture().decision, cvDraftRecommendation: recommendation } });
+    assert.match(html, /Bản nháp CV: chưa có khuyến nghị hợp lệ\./);
+    assert.doesNotMatch(html, /Bản nháp CV: đang giữ\./);
+  }
+});
+
 test("local note save confirms success, rejects blanks and preserves entered text on errors", async () => {
   const browser = browserFixture("#jobs/job-example");
   await initializeBrowserApp(browser.environment);
@@ -293,6 +303,28 @@ test("refresh hydrates real CV recommendations and polls only useful visible rou
   const hiddenCount = browser.requests.length;
   await browser.poll();
   assert.equal(browser.requests.length, hiddenCount);
+});
+
+test("overview hydrates recommendations for the same newest CV drafts it displays", async () => {
+  const browser = browserFixture("#overview");
+  browser.setSummary([
+    jobSummary({ id: "oldest", title: "Oldest", updatedAt: "2026-08-01T10:00:00Z" }),
+    jobSummary({ id: "middle", title: "Middle", updatedAt: "2026-08-02T10:00:00Z" }),
+    jobSummary({ id: "newer", title: "Newer", updatedAt: "2026-08-03T10:00:00Z" }),
+    jobSummary({ id: "newest", title: "Newest", updatedAt: "2026-08-04T10:00:00Z" }),
+  ]);
+  browser.setJobDetails({
+    middle: { ...populatedFixture(), id: "middle", decision: { ...populatedFixture().decision, cvDraftRecommendation: "create" } },
+    newer: { ...populatedFixture(), id: "newer", decision: { ...populatedFixture().decision, cvDraftRecommendation: "hold" } },
+    newest: { ...populatedFixture(), id: "newest", decision: { ...populatedFixture().decision, cvDraftRecommendation: "hold" } },
+  });
+
+  await initializeBrowserApp(browser.environment);
+
+  const snapshot = browser.html().match(/<section class="card cv-snapshot"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.ok(snapshot.indexOf("Newest") < snapshot.indexOf("Newer") && snapshot.indexOf("Newer") < snapshot.indexOf("Middle"));
+  assert.equal((snapshot.match(/Đang giữ/g) ?? []).length, 2);
+  assert.doesNotMatch(snapshot, /Oldest/);
 });
 
 test("polling defers DOM replacement during typing and applies the new artifacts afterwards", async () => {
@@ -394,6 +426,8 @@ function browserFixture(initialHash: string, narrow = false) {
   let focused = 0;
   let created: Record<string, any> | undefined;
   let detail: Record<string, any> = populatedFixture();
+  let summaryJobs: Record<string, any>[] | undefined;
+  let jobDetails: Record<string, Record<string, any>> = {};
   let note = "Initial local note";
   let currentForm: any;
   let failure: number | undefined;
@@ -452,8 +486,10 @@ function browserFixture(initialHash: string, narrow = false) {
         created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };
         return Response.json(created, { status: 201 });
       }
-      if (path === "/api/summary") return Response.json({ jobs: [jobSummary(), ...(created ? [created] : [])], profile: profileFixture() });
+      if (path === "/api/summary") return Response.json({ jobs: summaryJobs ?? [jobSummary(), ...(created ? [created] : [])], profile: profileFixture() });
       if (path === "/api/jobs/job-example") return Response.json(detail);
+      const matchedJob = path.match(/^\/api\/jobs\/([^/]+)$/);
+      if (matchedJob && jobDetails[decodeURIComponent(matchedJob[1])]) return Response.json(jobDetails[decodeURIComponent(matchedJob[1])]);
       if (path === "/api/jobs/job-example/note") return Response.json({ content: noteAtRequestStart });
       if (path === "/api/jobs/job-created" && created) return Response.json(created);
       if (path === "/api/jobs/job-created/note" && created) return Response.json({ content: null });
@@ -467,6 +503,8 @@ function browserFixture(initialHash: string, narrow = false) {
     failNext(status: number) { failure = status; },
     beforeRequest(hook: typeof requestHook) { requestHook = hook; },
     setDetail(value: Record<string, any>) { detail = value; },
+    setSummary(value: Record<string, any>[]) { summaryJobs = value; },
+    setJobDetails(value: Record<string, Record<string, any>>) { jobDetails = value; },
     html: () => app.innerHTML,
     focusCount: () => focused,
     async navigate(value: string) { window.location.hash = value; await navigation; },

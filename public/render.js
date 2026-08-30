@@ -39,7 +39,7 @@ export function renderPage({ route = { page: "overview" }, summary = {}, detail,
 }
 
 export function renderOverview(summary = {}, profile = summary.profile) {
-  const jobs = sortedJobs(summary.jobs);
+  const jobs = sortJobsForDisplay(summary.jobs);
   const priority = jobs.find((job) => job.decisionStatus === "clarify") ?? jobs.find((job) => !job.hasAnalysis) ?? jobs[0];
   const drafts = jobs.filter((job) => job.artifactStatus?.cvDraft === true);
   return `${pageHeader("Tổng quan", "Tiếp tục công việc từ những dữ liệu bạn đã lưu.")}
@@ -54,7 +54,7 @@ export function renderOverview(summary = {}, profile = summary.profile) {
 }
 
 export function renderJobs(summary = {}) {
-  const jobs = sortedJobs(summary.jobs);
+  const jobs = sortJobsForDisplay(summary.jobs);
   return `${pageHeader("Job descriptions", "Nguồn JD và các tài liệu đã có cho từng vị trí.")}<section class="card jobs-library" aria-label="Danh sách JD">${jobs.length ? renderJobList(jobs) : emptyJobs()}</section>`;
 }
 
@@ -94,7 +94,7 @@ export function renderProfile(profile, editor) {
 }
 
 export function renderCvLibrary(summary = {}) {
-  const drafts = sortedJobs(summary.jobs).filter((job) => job.artifactStatus?.cvDraft === true);
+  const drafts = sortJobsForDisplay(summary.jobs).filter((job) => job.artifactStatus?.cvDraft === true);
   return `${pageHeader("CV theo vị trí", "Bản nháp cục bộ gắn với từng JD, tải dưới dạng Markdown.")}<section class="card cv-library">${drafts.length ? renderCvList(drafts) : emptyCv()}</section>`;
 }
 
@@ -111,7 +111,7 @@ function pageHeader(title, description) {
   return `<header class="page-header"><div><p class="eyebrow">Không gian nghề nghiệp cục bộ</p><h1 id="page-heading" tabindex="-1">${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></div><button id="refresh" type="button" class="secondary">Tải lại dữ liệu</button></header>`;
 }
 
-function sortedJobs(jobs = []) {
+export function sortJobsForDisplay(jobs = []) {
   return [...jobs].sort((left, right) => (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0) || left.id.localeCompare(right.id));
 }
 
@@ -172,7 +172,8 @@ function renderRequirements(requirements = []) {
 }
 
 function renderDecision(decision) {
-  return `<section class="detail-section decision-section"><h2>Bằng chứng cho quyết định</h2><p>${escapeHtml(decision.summary)}</p>${renderEvidenceList("Điểm đáp ứng", decision.matches)}${renderEvidenceList("Khoảng trống", decision.gaps)}${renderEvidenceList("Trở ngại", decision.blockers)}${renderTextList("Câu hỏi cần làm rõ", decision.questions)}<p class="recommendation">Bản nháp CV: ${decision.cvDraftRecommendation === "create" ? "có thể tạo theo quyết định này" : "đang giữ"}.</p></section>`;
+  const cvRecommendation = decision.cvDraftRecommendation === "create" ? "có thể tạo theo quyết định này" : decision.cvDraftRecommendation === "hold" ? "đang giữ" : "chưa có khuyến nghị hợp lệ";
+  return `<section class="detail-section decision-section"><h2>Bằng chứng cho quyết định</h2><p>${escapeHtml(decision.summary)}</p>${renderEvidenceList("Điểm đáp ứng", decision.matches)}${renderEvidenceList("Khoảng trống", decision.gaps)}${renderEvidenceList("Trở ngại", decision.blockers)}${renderTextList("Câu hỏi cần làm rõ", decision.questions)}<p class="recommendation">Bản nháp CV: ${cvRecommendation}.</p></section>`;
 }
 
 function renderEvidenceList(title, items) {

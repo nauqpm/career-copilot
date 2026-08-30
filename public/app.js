@@ -1,4 +1,4 @@
-import { renderApplication } from "./render.js";
+import { renderApplication, sortJobsForDisplay } from "./render.js";
 import { parseRoute } from "./routes.js";
 import { mergeProfileSection, profileToSectionDraft } from "./profile-form.js";
 
@@ -57,7 +57,7 @@ export function initializeBrowserApp(browser = globalThis) {
 
   async function hydrateCvRecommendations(summary, route) {
     if (!["overview", "cvs"].includes(route.page)) return summary;
-    const drafts = summary.jobs.filter((job) => job.artifactStatus?.cvDraft === true);
+    const drafts = sortJobsForDisplay(summary.jobs).filter((job) => job.artifactStatus?.cvDraft === true);
     const visibleIds = new Set((route.page === "overview" ? drafts.slice(0, 3) : drafts).map((job) => job.id));
     const jobs = await Promise.all(summary.jobs.map(async (job) => {
       if (!visibleIds.has(job.id)) return job;

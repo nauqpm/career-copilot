@@ -32,6 +32,9 @@ if (isDirectExecution(import.meta.url, process.argv[1])) {
 
 async function handleRequest(request: IncomingMessage, response: ServerResponse, root: string): Promise<void> {
   try {
+    const host = request.headers.host;
+    const port = request.socket.localPort;
+    if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) throw new LocalRequestError();
     const method = request.method ?? "GET";
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
@@ -60,7 +63,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     }
 
     const draftMatch = path.match(/^\/api\/jobs\/([^/]+)\/cv-draft$/);
-    if (method === "GET" && draftMatch) return sendCvDraft(response, root, decodeURIComponent(draftMatch[1]!));
+    if (method === "GET" && draftMatch) return await sendCvDraft(response, root, decodeURIComponent(draftMatch[1]!));
     const noteMatch = path.match(/^\/api\/jobs\/([^/]+)\/note$/);
     if (method === "GET" && noteMatch) {
       const content = await readWorkspaceJobNote(root, decodeURIComponent(noteMatch[1]!));
@@ -75,7 +78,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
     if (method === "GET" && jobMatch) return sendJson(response, 200, await readWorkspaceJob(root, decodeURIComponent(jobMatch[1]!)));
 
-    if (method === "GET") return sendStaticFile(response, root, path);
+    if (method === "GET") return await sendStaticFile(response, root, path);
     return sendJson(response, 404, { error: "Not found" });
   } catch (error) {
     sendError(response, error);
@@ -110,6 +113,9 @@ async function sendStaticFile(response: ServerResponse, root: string, requestPat
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  if (request.headers.origin !== undefined && request.headers.origin !== `http://${request.headers.host}`) {
+    throw new LocalRequestError();
+  }
   if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
     throw new InputError("JSON content type is required");
   }
@@ -156,6 +162,7 @@ function sendError(response: ServerResponse, error: unknown): void {
     response.end();
     return;
   }
+  if (error instanceof LocalRequestError) return sendJson(response, 403, { error: "Only local workspace requests are allowed." });
   if (error instanceof InputError || error instanceof SyntaxError || isValidationError(error)) {
     return sendJson(response, 400, { error: "The supplied local data is invalid." });
   }
@@ -190,6 +197,7 @@ function isMissingJobError(error: unknown): boolean {
 }
 
 class InputError extends Error {}
+class LocalRequestError extends Error {}
 
 function isDirectExecution(moduleUrl: string, executedPath: string | undefined): boolean {
   return executedPath !== undefined && moduleUrl === pathToFileURL(resolve(executedPath)).href;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { once } from "node:events";
+import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -189,6 +190,123 @@ test("rejects empty pasted JD", async () => {
   }
 });
 
+test("a missing-job CV download returns JSON 404 and leaves the server usable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const app = await startTestServer(root);
+
+  try {
+    const missing = await fetch(`${app.url}/api/jobs/job-does-not-exist/cv-draft`, { signal: AbortSignal.timeout(1000) });
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers.get("content-type") ?? "", /^application\/json/);
+    assert.deepEqual(await missing.json(), { error: "Not found" });
+
+    const safe = await fetch(`${app.url}/api/jobs`);
+    assert.equal(safe.status, 200);
+    assert.deepEqual(await safe.json(), []);
+  } finally {
+    await app.close();
+  }
+});
+
+test("a static-file read failure stays inside the JSON error boundary", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  await mkdir(join(root, "public", "unreadable.css"), { recursive: true });
+  const app = await startTestServer(root);
+
+  try {
+    const failed = await fetch(`${app.url}/unreadable.css`, { signal: AbortSignal.timeout(1000) });
+    assert.equal(failed.status, 500);
+    assert.match(failed.headers.get("content-type") ?? "", /^application\/json/);
+    assert.deepEqual(await failed.json(), { error: "Unable to process the local request." });
+    assert.equal((await fetch(`${app.url}/api/jobs`)).status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test("accepts local authorities and matching HTTP origins on the listening port", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const app = await startTestServer(root);
+  const port = new URL(app.url).port;
+
+  try {
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`]) {
+      const headers = { host, origin: `http://${host}` };
+      const listed = await requestWithHeaders(app.url, "/api/jobs", headers);
+      assert.equal(listed.status, 200);
+      const saved = await requestWithHeaders(app.url, "/api/jobs", headers, "POST", { content: "Local role" });
+      assert.equal(saved.status, 201);
+      const job = JSON.parse(saved.body) as { id: string };
+      const mutations = [
+        { method: "PUT", path: `/api/jobs/${job.id}/note`, body: { content: "Local note" }, status: 200 },
+        { method: "PUT", path: "/api/profile", body: { experience: [], skills: [], education: [], languages: [] }, status: 200 },
+        { method: "POST", path: "/api/profile/source", body: { content: "Local CV source" }, status: 204 },
+      ];
+      for (const mutation of mutations) {
+        const response = await requestWithHeaders(app.url, mutation.path, headers, mutation.method, mutation.body);
+        assert.equal(response.status, mutation.status, mutation.path);
+      }
+      assert.equal(await readWorkspaceJobNote(root, job.id), "Local note");
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("rejects foreign or incorrect Host before serving local data or static files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  await mkdir(join(root, "public"));
+  await writeFile(join(root, "public", "app.js"), "Local application asset");
+  const app = await startTestServer(root);
+  const port = new URL(app.url).port;
+
+  try {
+    const invalidHosts = [`foreign.example:${port}`, `localhost.foreign.example:${port}`, `127.0.0.2:${port}`, "localhost:1", "127.0.0.1", ""];
+    for (const host of invalidHosts) {
+      for (const path of ["/api/jobs", "/app.js"]) {
+        const response = await requestWithHeaders(app.url, path, { host });
+        assert.equal(response.status, 403, `${host} ${path}`);
+        assert.match(response.contentType ?? "", /^application\/json/);
+        assert.deepEqual(JSON.parse(response.body), { error: "Only local workspace requests are allowed." });
+      }
+    }
+    const rejected = await requestWithHeaders(app.url, "/api/jobs", { host: `foreign.example:${port}`, origin: `http://foreign.example:${port}` }, "POST", { content: "Untrusted role" });
+    assert.equal(rejected.status, 403);
+    assert.deepEqual(await listWorkspaceJobs(root), []);
+    assert.equal((await fetch(`${app.url}/app.js`)).status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test("rejects foreign origins on every JSON mutation without changing local artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Existing role" });
+  const app = await startTestServer(root);
+  const host = new URL(app.url).host;
+  const mutations = [
+    { method: "POST", path: "/api/jobs", body: { content: "Untrusted role" } },
+    { method: "PUT", path: `/api/jobs/${job.id}/note`, body: { content: "Untrusted note" } },
+    { method: "PUT", path: "/api/profile", body: { experience: [], skills: [], education: [], languages: [] } },
+    { method: "POST", path: "/api/profile/source", body: { content: "Untrusted source" } },
+  ];
+
+  try {
+    for (const origin of ["http://foreign.example", "null", "", `https://${host}`, "http://127.0.0.1:1", app.url.replace("127.0.0.1", "localhost")]) {
+      for (const mutation of mutations) {
+        const response = await requestWithHeaders(app.url, mutation.path, { host, origin }, mutation.method, mutation.body);
+        assert.equal(response.status, 403, `${origin} ${mutation.path}`);
+        assert.deepEqual(JSON.parse(response.body), { error: "Only local workspace requests are allowed." });
+      }
+    }
+    assert.deepEqual((await listWorkspaceJobs(root)).map((entry) => entry.id), [job.id]);
+    assert.equal(await readWorkspaceJobNote(root, job.id), undefined);
+    await assert.rejects(() => stat(join(root, "data", "profile")), { code: "ENOENT" });
+  } finally {
+    await app.close();
+  }
+});
+
 test("returns null for an existing job without a saved note", async () => {
   const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
   const job = await createPastedJob(root, { content: "Backend role" });
@@ -270,6 +388,19 @@ async function startTestServer(root: string) {
     url: `http://127.0.0.1:${address.port}`,
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
+}
+
+function requestWithHeaders(url: string, path: string, headers: Record<string, string>, method = "GET", body?: unknown) {
+  return new Promise<{ status: number | undefined; contentType: string | undefined; body: string }>((resolve, reject) => {
+    const request = httpRequest(`${url}${path}`, { method, setHost: false, headers: { "content-type": "application/json", ...headers } }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => resolve({ status: response.statusCode, contentType: response.headers["content-type"], body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    request.on("error", reject);
+    request.end(body === undefined ? undefined : JSON.stringify(body));
+  });
 }
 
 function postJson(url: string, path: string, body: unknown) {

@@ -140,13 +140,19 @@ export function initializeBrowserApp(browser = globalThis) {
     try {
       const values = new FormData(form);
       if (form.id === "job-form") {
+        const savedDraft = state.jobDraft;
         if (!String(values.get("content") ?? "").trim()) throw new Error("Hãy nhập nội dung JD không rỗng trước khi lưu.");
         const job = await requestJson("/api/jobs", { method: "POST", body: JSON.stringify({ content: values.get("content"), sourceReference: values.get("sourceReference") }) });
-        if (!form.isConnected) return;
-        state = { ...state, jobDraft: {} };
+        state = { ...state, jobDraft: state.jobDraft === savedDraft ? {} : state.jobDraft };
         const hash = `#jobs/${encodeURIComponent(job.id)}`;
-        pendingNotice = { hash, message: "Đã lưu JD trên máy." };
-        window.location.hash = hash;
+        const message = "Đã lưu JD trên máy.";
+        if (window.location.hash === hash) {
+          showNotice(message);
+          await refresh(true);
+        } else {
+          pendingNotice = { hash, message };
+          window.location.hash = hash;
+        }
       } else if (form.id === "note-form" && route.page === "job") {
         const content = values.get("content");
         if (!String(content ?? "").trim()) throw new Error("Hãy nhập ghi chú không rỗng trước khi lưu.");

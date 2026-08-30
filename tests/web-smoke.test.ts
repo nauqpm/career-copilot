@@ -48,6 +48,80 @@ test("browser controller keeps creation confirmation on the new detail route onl
   assert.doesNotMatch(browser.html(), /Đã lưu JD trên máy\./);
 });
 
+for (const replacement of ["refresh", "navigation"]) {
+  test(`a delayed JD save after ${replacement} consumes the saved draft and opens its detail`, async () => {
+    const browser = browserFixture("#new-job");
+    await initializeBrowserApp(browser.environment);
+    let releaseSave!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseSave = resolve; });
+    browser.beforeRequest((_path, options) => options.method === "POST" ? gate : Promise.resolve());
+    const saving = browser.submitJob({ content: "Saved original JD", sourceReference: "Saved source" });
+    const submittedForm = browser.form();
+    assert.equal(submittedForm.isConnected, true);
+
+    if (replacement === "refresh") await browser.refresh();
+    else await browser.navigate("#jobs");
+    assert.equal(submittedForm.isConnected, false, "rendering replaces and disconnects the submitted form");
+    releaseSave();
+    await saving;
+
+    assert.equal(browser.environment.window.location.hash, "#jobs/job-created");
+    assert.match(browser.html(), /Saved original JD/);
+    assert.match(browser.html(), /role="status"[^>]*>Đã lưu JD trên máy\.</);
+    await browser.navigate("#new-job");
+    assert.deepEqual(browser.form().fields, { content: "", sourceReference: "" });
+    await browser.submit("job-form");
+    assert.equal(browser.requests.filter((request) => request.options.method === "POST").length, 1, "the saved draft cannot be submitted again");
+  });
+}
+
+for (const replaceForm of [false, true]) {
+  test(`a delayed JD save preserves newer edits in the ${replaceForm ? "replacement" : "original"} form`, async () => {
+    const browser = browserFixture("#new-job");
+    await initializeBrowserApp(browser.environment);
+    let releaseSave!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseSave = resolve; });
+    browser.beforeRequest((_path, options) => options.method === "POST" ? gate : Promise.resolve());
+    const saving = browser.submitJob({ content: "Saved original JD", sourceReference: "Saved source" });
+    const submittedForm = browser.form();
+    if (replaceForm) await browser.refresh();
+    const newerDraft = { content: "Newer unsaved JD", sourceReference: "Newer source" };
+    await browser.type("job-form", newerDraft);
+    assert.equal(submittedForm.isConnected, !replaceForm);
+    releaseSave();
+    await saving;
+
+    assert.equal(browser.environment.window.location.hash, "#jobs/job-created");
+    assert.match(browser.html(), /Saved original JD/);
+    assert.doesNotMatch(browser.html(), /Newer unsaved JD/);
+    assert.match(browser.html(), /role="status"[^>]*>Đã lưu JD trên máy\.</);
+    await browser.navigate("#new-job");
+    assert.deepEqual(browser.form().fields, newerDraft);
+    assert.equal(browser.requests.filter((request) => request.options.method === "POST").length, 1);
+  });
+}
+
+test("a delayed JD save refreshes success when its detail hash is already selected", async () => {
+  const browser = browserFixture("#new-job");
+  await initializeBrowserApp(browser.environment);
+  let releaseSave!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  browser.beforeRequest((_path, options) => options.method === "POST" ? gate : Promise.resolve());
+  const saving = browser.submitJob({ content: "Saved original JD", sourceReference: "Saved source" });
+  const submittedForm = browser.form();
+  await browser.navigate("#jobs/job-created");
+  assert.equal(submittedForm.isConnected, false);
+  releaseSave();
+  await saving;
+
+  assert.equal(browser.environment.window.location.hash, "#jobs/job-created");
+  assert.match(browser.html(), /Saved original JD/);
+  assert.match(browser.html(), /role="status"[^>]*>Đã lưu JD trên máy\.</);
+  await browser.navigate("#new-job");
+  assert.deepEqual(browser.form().fields, { content: "", sourceReference: "" });
+  assert.equal(browser.requests.filter((request) => request.options.method === "POST").length, 1);
+});
+
 test("hash routes select all six screens and preserve decoded valid job IDs", () => {
   const routes = [
     ["#overview", { page: "overview" }], ["#jobs", { page: "jobs" }],
@@ -420,7 +494,22 @@ function browserFixture(initialHash: string, narrow = false) {
   const pageEvents = new Map<string, Handler>();
   const windowEvents = new Map<string, Handler>();
   const requests: { path: string; options: { method?: string; body?: string } }[] = [];
-  const app = { innerHTML: "", addEventListener: (name: string, handler: Handler) => pageEvents.set(name, handler) };
+  let currentForm: any;
+  let renderedHtml = "";
+  const app = {
+    get innerHTML() { return renderedHtml; },
+    set innerHTML(html: string) {
+      renderedHtml = html;
+      currentForm = undefined;
+      if (html.includes('id="job-form"')) {
+        currentForm = makeForm("job-form", {
+          content: decodeHtml(html.match(/<textarea[^>]*id="job-content"[^>]*>([\s\S]*?)<\/textarea>/)?.[1] ?? ""),
+          sourceReference: decodeHtml(html.match(/<input[^>]*id="source-reference"[^>]*value="([^"]*)"/)?.[1] ?? ""),
+        });
+      }
+    },
+    addEventListener: (name: string, handler: Handler) => pageEvents.set(name, handler),
+  };
   let hash = initialHash;
   let navigation: Promise<unknown> = Promise.resolve();
   let focused = 0;
@@ -429,7 +518,6 @@ function browserFixture(initialHash: string, narrow = false) {
   let summaryJobs: Record<string, any>[] | undefined;
   let jobDetails: Record<string, Record<string, any>> = {};
   let note = "Initial local note";
-  let currentForm: any;
   let failure: number | undefined;
   let requestHook: ((path: string, options: { method?: string }) => Promise<void>) | undefined;
   let interval: Handler | undefined;
@@ -440,6 +528,7 @@ function browserFixture(initialHash: string, narrow = false) {
     location: {
       get hash() { return hash; },
       set hash(value: string) {
+        if (value === hash) return;
         hash = value;
         navigation = Promise.resolve().then(() => windowEvents.get("hashchange")?.());
       },
@@ -465,10 +554,10 @@ function browserFixture(initialHash: string, narrow = false) {
       },
     },
     FormData: class {
-      form: { fields: Record<string, string> };
-      constructor(form: { fields: Record<string, string> }) { this.form = form; }
-      get(name: string) { return this.form.fields[name] ?? null; }
-      entries() { return Object.entries(this.form.fields)[Symbol.iterator](); }
+      fields: Record<string, string | File>;
+      constructor(form: { fields: Record<string, string | File> }) { this.fields = { ...form.fields }; }
+      get(name: string) { return this.fields[name] ?? null; }
+      entries() { return Object.entries(this.fields)[Symbol.iterator](); }
     },
     File,
     async fetch(path: string, options: { method?: string; body?: string } = {}) {
@@ -496,8 +585,23 @@ function browserFixture(initialHash: string, narrow = false) {
       throw new Error(`Unexpected request: ${options.method ?? "GET"} ${path}`);
     },
   };
+  function makeForm(id: string, fields: Record<string, string | File>) {
+    const form = { id, fields, get isConnected() { return currentForm === form; }, querySelector: () => ({ disabled: false }) };
+    return form;
+  }
+  function updateForm(id: string, fields?: Record<string, string | File>) {
+    if (currentForm?.id !== id) currentForm = makeForm(id, fields ?? {});
+    else if (fields) currentForm.fields = { ...fields };
+    return currentForm;
+  }
+  async function submit(id: string, fields?: Record<string, string | File>) {
+    const form = updateForm(id, fields);
+    await pageEvents.get("submit")?.({ target: form, preventDefault() {} });
+    await navigation;
+  }
   return {
     environment, requests, notice, menu, navigation: navigationElement,
+    form: () => currentForm,
     async toggleMenu() { await pageEvents.get("click")?.({ target: { closest: () => menu } }); },
     async escapeMenu() { await pageEvents.get("keydown")?.({ key: "Escape" }); },
     failNext(status: number) { failure = status; },
@@ -511,20 +615,16 @@ function browserFixture(initialHash: string, narrow = false) {
     async refresh() { await pageEvents.get("click")?.({ target: { closest: () => ({ id: "refresh" }) } }); },
     async poll() { await interval?.(); },
     async type(id: string, fields: Record<string, string>) {
-      currentForm = { id, fields };
-      await pageEvents.get("input")?.({ target: { closest: () => currentForm } });
+      const form = updateForm(id, fields);
+      await pageEvents.get("input")?.({ target: { closest: () => form } });
     },
-    async submit(id: string, fields: Record<string, string | File>) {
-      currentForm = { id, fields, isConnected: true, querySelector: () => ({ disabled: false }) };
-      await pageEvents.get("submit")?.({ target: currentForm, preventDefault() {} });
-      await navigation;
-    },
-    async submitJob(fields: Record<string, string>) {
-      const form = { id: "job-form", fields, isConnected: true, querySelector: () => ({ disabled: false }) };
-      await pageEvents.get("submit")?.({ target: form, preventDefault() {} });
-      await navigation;
-    },
+    submit,
+    submitJob: (fields: Record<string, string>) => submit("job-form", fields),
   };
+}
+
+function decodeHtml(value: string) {
+  return value.replaceAll("&quot;", '"').replaceAll("&#39;", "'").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
 
 function profileFixture() {

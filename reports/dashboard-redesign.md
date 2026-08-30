@@ -46,6 +46,10 @@ Final Task 6 checks after the documentation change:
 | `pnpm test` | 90 passed, 0 failed. |
 | `pnpm build` | Passed (`tsc`). |
 | `pnpm audit` | No known vulnerabilities found. |
+| `git diff --check` | Passed with no whitespace errors. |
+| `git diff --cached --check` | Passed with no whitespace errors. |
+
+The Task 6 staged-file audit confirmed exactly `README.md`, the accepted design, the implementation plan, and this delivery report. No local career data, credentials, implementation/test files, package/lockfile changes, or unrelated files were staged. The post-commit audit of `9b11c7d` confirmed the same four files and an empty `git status --short`.
 
 The sandboxed `pnpm test`/`pnpm build` invocations aborted before execution with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`, while their dependency-layout guard attempted a modules-directory action. The existing local runtime then ran both commands successfully without installing or modifying dependencies, the manifest, lockfile, or `node_modules`.
 
@@ -62,6 +66,32 @@ Task 5 browser verification passed the following exercise against a disposable, 
 9. The 390px menu was operable, had visible focus, returned focus on Escape, and the dashboard had no horizontal overflow at 1280px, 800px, or 390px.
 
 The earlier focused Task 5 evidence was `pnpm exec tsx --test tests/web-smoke.test.ts tests/profile-form.test.ts` (49 passed). The Task 5 fix round then ran `pnpm test` (90 passed), `pnpm build`, and `git diff --check`; the fresh Task 6 checks above independently repeat the test/build/audit commands.
+
+## Final review fixes
+
+The final branch review identified three important defects, now covered by regressions:
+
+- CV-draft and static-file handlers are awaited inside the shared request error boundary. A missing-job download returns the existing generic JSON 404, and a static read failure returns generic JSON 500; both tests then successfully use the same server again. Neither response exposes filesystem paths.
+- Requests must supply exactly `127.0.0.1:<listening-port>` or `localhost:<listening-port>` as Host. Every JSON mutation rejects a supplied Origin unless it exactly matches `http://<Host>`. Foreign hosts, different ports, HTTPS origins, mismatched local aliases, and empty/`null` origins return JSON 403. Local clients without Origin remain supported. The loopback binding, safe-ID validation, content validation, and body limit are unchanged; no CORS or authentication feature was added.
+- A successful JD save is reconciled even after refresh/navigation replaces its original form. Only the submitted immutable draft version is cleared; newer input is retained. Success opens the saved JD with confirmation, or refreshes that detail when its hash is already selected. Returning to New JD does not expose the consumed draft for duplicate submission.
+
+TDD evidence: both async-error regressions first failed with unhandled rejections; foreign Host and Origin regressions first received 200/201 instead of 403. Four delayed-save cases first failed through missing navigation or erased newer input, and an additional already-selected-hash case failed through stale detail. The fixes then passed all cases. The controller fixture now disconnects forms on `innerHTML` replacement, snapshots `FormData`, and emits no hash event when the hash is unchanged.
+
+Fresh final-fix verification:
+
+| Command | Result |
+| --- | --- |
+| `pnpm exec tsx --test --test-reporter=spec tests/workspace.test.ts tests/web-smoke.test.ts tests/profile-form.test.ts` | 75 passed, 0 failed. |
+| `pnpm test` | 100 passed, 0 failed. |
+| `pnpm build` | Passed (`tsc`). |
+| `pnpm audit` | No known vulnerabilities found. |
+| Full suite with `tsx --test --experimental-test-coverage` | 100 passed. Changed server: 99.02% lines / 80.81% branches; browser controller: 99.17% lines / 90.44% branches. |
+| `git diff --check` | Passed with no whitespace errors. |
+| `git diff --cached --check` | Passed with no whitespace errors. |
+
+The final-fix staged-file audit contains exactly `src/web/server.ts`, `tests/workspace.test.ts`, `public/app.js`, `tests/web-smoke.test.ts`, and this report. No `data/`, credential, package, lockfile, unrelated change, or internal `.superpowers` report is staged.
+
+These checks used the existing local runtime with process-only `pnpm_config_verify_deps_before_run=false`; the sandbox could not resolve `tsx` through the existing dependency junctions. No dependency was installed or changed. Final-fix coverage is automated controller and local HTTP coverage; the Task 5 real-browser exercise above was not rerun for this wave.
 
 ## Decisions made during delivery
 

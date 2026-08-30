@@ -1,76 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi" data-theme="dark">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
     <title>Career Copilot</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <a class="skip-link" href="#workspace">Skip to workspace</a>
-    <header class="site-header">
-      <div>
-        <p class="eyebrow">Local-first career workspace</p>
-        <h1>Career Copilot</h1>
-      </div>
-      <p class="local-note">Your files stay on this computer. Codex analysis appears after refresh.</p>
-    </header>
-
-    <main id="workspace">
-      <p id="notice" class="notice" role="status" aria-live="polite"></p>
-      <section class="intake-grid" aria-label="Your source records">
-        <form id="job-form" class="card form-card">
-          <h2>Add a job</h2>
-          <p>Paste the original job description. It will be saved unchanged for Codex to read later.</p>
-          <label for="job-content">Job description</label>
-          <textarea id="job-content" name="content" rows="8" required></textarea>
-          <label for="source-reference">Source link or label <span>(optional)</span></label>
-          <input id="source-reference" name="sourceReference" type="text" placeholder="Company careers page">
-          <button type="submit">Save job locally</button>
-        </form>
-
-        <section class="card profile-card" aria-labelledby="profile-heading">
-          <div class="section-heading">
-            <div>
-              <h2 id="profile-heading">Base profile</h2>
-              <p>These facts are yours. A job-specific CV draft never replaces them.</p>
-            </div>
-            <button id="profile-toggle" type="button" class="secondary">Edit profile</button>
-          </div>
-          <div id="profile-summary"></div>
-          <form id="profile-form" hidden>
-            <div class="field-grid">
-              <div><label for="profile-name">Name</label><input id="profile-name" name="name" type="text"></div>
-              <div><label for="profile-email">Email</label><input id="profile-email" name="email" type="email"></div>
-              <div><label for="profile-location">Location</label><input id="profile-location" name="location" type="text"></div>
-              <div><label for="profile-headline">Headline</label><input id="profile-headline" name="headline" type="text"></div>
-            </div>
-            <label for="profile-summary-input">Summary</label>
-            <textarea id="profile-summary-input" name="summary" rows="3"></textarea>
-            <label for="profile-skills">Skills <span>(one per line)</span></label>
-            <textarea id="profile-skills" name="skills" rows="4"></textarea>
-            <label for="profile-experience">Experience <span>(one role per line: title | company | highlight; another highlight)</span></label>
-            <textarea id="profile-experience" name="experience" rows="4"></textarea>
-            <label for="profile-education">Education <span>(one item per line: school | degree | field)</span></label>
-            <textarea id="profile-education" name="education" rows="3"></textarea>
-            <label for="profile-languages">Languages <span>(one item per line: language | level)</span></label>
-            <textarea id="profile-languages" name="languages" rows="3"></textarea>
-            <div class="field-grid">
-              <div><label for="profile-arrangement">Preferred arrangement</label><select id="profile-arrangement" name="arrangement"><option value="">No preference</option><option value="onsite">Onsite</option><option value="hybrid">Hybrid</option><option value="remote">Remote</option></select></div>
-              <div><label for="profile-minimum-salary">Minimum salary</label><input id="profile-minimum-salary" name="minimumSalary" type="text"></div>
-            </div>
-            <button type="submit">Save base profile</button>
-          </form>
-          <form id="profile-source-form" class="source-import">
-            <label for="profile-source">Optional CV source (.txt or .md)</label>
-            <input id="profile-source" name="source" type="file" accept=".txt,.md,text/plain,text/markdown">
-            <button type="submit" class="secondary">Store source file</button>
-          </form>
-        </section>
-      </section>
-
-      <section id="dashboard" aria-label="Job workspace"></section>
-    </main>
+    <a class="skip-link" href="#workspace">Chuyển đến nội dung</a>
+    <div id="app" class="app-shell"></div>
+    <noscript>Hãy bật JavaScript để xem không gian làm việc cục bộ.</noscript>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

@@ -145,3 +145,7 @@ Use premium utilitarian minimalism, adapted to a fixed dark canvas:
 
 - Search/filter and sort controls, archive/delete, application tracking, reminders, company research, automated ingestion, chat, scoring, PDF/DOCX, and collaboration remain out of scope.
 - If local notes prove useful through dogfooding, a later slice may add note history or attach notes to explicit application stages. This redesign does not create either concept.
+
+## 10. Delivery record
+
+The implementation follows this accepted design on `slice-4-local-workspace`. The delivery report records the final verification evidence, browser scenarios, and deliberate scope decisions: [dashboard redesign delivery report](../../../reports/dashboard-redesign.md). The implementation plan remains the task-level change record: [dashboard redesign plan](../plans/2026-08-29-career-copilot-dashboard-redesign.md).

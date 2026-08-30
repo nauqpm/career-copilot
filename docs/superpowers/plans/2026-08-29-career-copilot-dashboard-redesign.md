@@ -435,3 +435,7 @@ docs: report dashboard redesign
 ## Intentional deferrals
 
 Search/filter, archive/delete, a light theme, job analysis from the web UI, embedded Codex chat, company-data automation, application tracking, CV export, remote backup/sync, and candidate-fit scoring remain out of scope. They require separate user-approved design work after this local dashboard is validated.
+
+## Delivery record
+
+The delivery evidence and implementation decisions are recorded in [reports/dashboard-redesign.md](../../../reports/dashboard-redesign.md). In particular, the accepted palette is `#0D1012`, `#121618`, `#131719`, and `#2A3033`, and final quality checks include `pnpm audit` as required by the accepted design.

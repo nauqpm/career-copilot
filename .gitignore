@@ -7,5 +7,7 @@ data/analysis/*
 !data/analysis/.gitkeep
 data/profile/*
 !data/profile/.gitkeep
+data/jobs/*
+!data/jobs/.gitkeep
 fixtures/real-jobs/*
 !fixtures/real-jobs/.gitkeep

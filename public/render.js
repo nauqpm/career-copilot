@@ -9,31 +9,31 @@ const arrangementLabels = { onsite: "Tại nơi làm việc", hybrid: "Kết h�
 const employmentLabels = { "full-time": "Toàn thời gian", "part-time": "Bán thời gian", contract: "Hợp đồng", internship: "Thực tập", temporary: "Thời vụ" };
 const artifactLabels = [["source", "Nguồn JD"], ["analysis", "Phân tích"], ["decision", "Quyết định"], ["cvDraft", "Bản nháp CV"]];
 
-export function renderApplication({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note, error, notice } = {}) {
-  return `${renderSidebar(route)}<main id="workspace" class="workspace-main">
-    <p id="notice" class="notice${error ? " error" : ""}" role="${error ? "alert" : "status"}" aria-live="polite">${escapeHtml(error || notice || "")}</p>
-    ${renderPage({ route, summary, detail, profile, profileEditor, note })}
+export function renderApplication({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note, jobDraft, error, notice, menuOpen = true, loading = false } = {}) {
+  return `${renderSidebar(route, menuOpen)}<main id="workspace" class="workspace-main" aria-busy="${loading}">
+    <p id="notice" class="notice${error ? " error" : ""}" aria-atomic="true" role="${error ? "alert" : "status"}" aria-live="polite">${escapeHtml(error || notice || "")}${error && route.page === "profile" && profileEditor && !error.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}</p>
+    ${loading && route.page === "job" ? pageHeader("Đang tải JD…", "Đọc nguồn và tài liệu trên máy của bạn.") : renderPage({ route, summary, detail, profile, profileEditor, note, jobDraft })}
   </main>`;
 }
 
-export function renderSidebar(route = { page: "overview" }) {
+export function renderSidebar(route = { page: "overview" }, menuOpen = true) {
   const activePage = route.page === "job" ? "jobs" : route.page;
   return `<aside class="app-sidebar" aria-label="Điều hướng chính">
     <a class="brand" href="#overview">Career Copilot</a>
     <p class="local-badge">Chỉ lưu trên máy này</p>
-    <button id="menu-toggle" class="menu-toggle secondary" type="button" aria-controls="workspace-navigation" aria-expanded="true">Menu</button>
-    <nav id="workspace-navigation" aria-label="Không gian làm việc">${navigation.map(([page, label]) => `<a href="#${page}" class="nav-link${activePage === page ? " active" : ""}"${activePage === page ? ' aria-current="page"' : ""}>${label}${activePage === page ? '<span class="nav-indicator" aria-hidden="true"> •</span>' : ""}</a>`).join("")}</nav>
+    <button id="menu-toggle" class="menu-toggle secondary" type="button" aria-controls="workspace-navigation" aria-expanded="${menuOpen}">Menu</button>
+    <nav id="workspace-navigation" aria-label="Không gian làm việc"${menuOpen ? "" : " hidden"}>${navigation.map(([page, label]) => `<a href="#${page}" class="nav-link${activePage === page ? " active" : ""}"${activePage === page ? ' aria-current="page"' : ""}>${label}${activePage === page ? '<span class="nav-indicator" aria-hidden="true"> •</span>' : ""}</a>`).join("")}</nav>
     <p class="sidebar-note">JD, hồ sơ và bản nháp được giữ trong thư mục cục bộ.</p>
   </aside>`;
 }
 
-export function renderPage({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note } = {}) {
+export function renderPage({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note, jobDraft } = {}) {
   switch (route.page) {
     case "jobs": return renderJobs(summary);
     case "job": return renderJobDetail(detail, note);
     case "profile": return renderProfile(profile, profileEditor);
     case "cvs": return renderCvLibrary(summary);
-    case "new-job": return renderNewJob();
+    case "new-job": return renderNewJob(jobDraft);
     default: return renderOverview(summary, profile);
   }
 }
@@ -217,7 +217,7 @@ function renderEducation(items) {
 }
 
 function renderCvList(jobs) {
-  return `<ul class="cv-list">${jobs.map((job) => `<li><a href="${jobHref(job.id)}">${escapeHtml(job.title ?? job.company ?? "JD chưa có tiêu đề")}</a><p>${job.cvDraftRecommendation === "hold" ? "Đang giữ" : "Đã có bản nháp"}</p>${renderTime(job.cvDraftUpdatedAt)}${downloadLink(job.id)}</li>`).join("")}</ul>`;
+  return `<ul class="cv-list">${jobs.map((job) => `<li><a href="${jobHref(job.id)}">${escapeHtml(job.title ?? job.company ?? "JD chưa có tiêu đề")}</a><p>${job.cvDraftRecommendation === "hold" ? "Đang giữ" : "Đã có bản nháp"}${job.cvRecommendationError ? " · Chưa tải được quyết định; mở JD để kiểm tra." : ""}</p>${renderTime(job.cvDraftUpdatedAt)}${downloadLink(job.id)}</li>`).join("")}</ul>`;
 }
 
 function renderTextList(title, items) {

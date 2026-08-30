@@ -210,6 +210,157 @@ test("new JD form labels both inputs and preserves submitted source as literal t
   assert.match(html, /value="Company site"/);
 });
 
+test("page feedback keeps failed profile edits visible and explains that the draft is preserved", () => {
+  const html = renderApplication({ route: { page: "profile" }, profile: profileFixture(), profileEditor: { section: "identity", draft: { name: "Chưa lưu" } }, error: "Không lưu được hồ sơ." });
+  assert.match(html, /role="alert"/);
+  assert.match(html, /Không lưu được hồ sơ/);
+  assert.match(html, /Nội dung đang nhập được giữ nguyên/);
+  assert.match(html, />Chưa lưu<\/textarea>/);
+});
+
+test("application carries the unsaved JD draft into its labelled intake form", () => {
+  const html = renderApplication({ route: { page: "new-job" }, jobDraft: { content: "Bản đang nhập", sourceReference: "Nguồn riêng" } });
+  assert.match(html, /<label for="job-content">Nội dung JD gốc/);
+  assert.match(html, /<label for="source-reference">/);
+  assert.match(html, />Bản đang nhập<\/textarea>/);
+  assert.match(html, /value="Nguồn riêng"/);
+});
+
+test("CV library never labels a draft held from decision status alone", () => {
+  const html = renderCvLibrary({ jobs: [jobSummary({ decisionStatus: "not-ready" })] });
+  assert.match(html, /Đã có bản nháp/);
+  assert.doesNotMatch(html, /Đang giữ/);
+  assert.match(renderCvLibrary({ jobs: [jobSummary({ cvDraftRecommendation: "hold" })] }), /Đang giữ/);
+  assert.doesNotMatch(renderCvLibrary({ jobs: [jobSummary({ artifactStatus: { cvDraft: false } })] }), / download/);
+});
+
+test("local note save confirms success, rejects blanks and preserves entered text on errors", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.submit("note-form", { content: "Ghi chú riêng" });
+  assert.match(browser.notice.textContent, /Đã lưu ghi chú/);
+  assert.equal(browser.notice.role, "status");
+  await browser.navigate("#jobs");
+  await browser.navigate("#jobs/job-example");
+  assert.match(browser.html(), />Ghi chú riêng<\/textarea>/);
+  const writes = () => browser.requests.filter((request) => request.options.method === "PUT");
+  const count = writes().length;
+  await browser.submit("note-form", { content: "   " });
+  assert.equal(writes().length, count, "blank notes must not be sent");
+  assert.match(browser.notice.textContent, /không.*rỗng|nhập.*ghi chú/i);
+  browser.failNext(500);
+  await browser.submit("note-form", { content: "Giữ lại khi lỗi" });
+  assert.equal(browser.notice.role, "alert");
+  await browser.refresh();
+  assert.match(browser.html(), />Giữ lại khi lỗi<\/textarea>/);
+});
+
+test("manual refresh and navigation preserve JD and per-job note drafts", async () => {
+  const browser = browserFixture("#new-job");
+  await initializeBrowserApp(browser.environment);
+  await browser.type("job-form", { content: "Chưa lưu JD", sourceReference: "Nguồn chưa lưu" });
+  await browser.refresh();
+  assert.match(browser.html(), />Chưa lưu JD<\/textarea>/);
+  await browser.navigate("#jobs/job-example");
+  await browser.type("note-form", { content: "Ghi chú chưa lưu" });
+  await browser.refresh();
+  assert.match(browser.html(), />Ghi chú chưa lưu<\/textarea>/);
+  await browser.navigate("#new-job");
+  assert.match(browser.html(), />Chưa lưu JD<\/textarea>/);
+  await browser.submitJob({ content: "Một JD khác", sourceReference: "Nguồn thứ hai" });
+  assert.doesNotMatch(browser.html(), /Ghi chú chưa lưu/);
+  await browser.navigate("#jobs/job-example");
+  assert.match(browser.html(), />Ghi chú chưa lưu<\/textarea>/);
+});
+
+test("refresh hydrates real CV recommendations and polls only useful visible routes", async () => {
+  const browser = browserFixture("#cvs");
+  browser.setDetail({ ...populatedFixture(), decision: { ...populatedFixture().decision, cvDraftRecommendation: "hold" } });
+  await initializeBrowserApp(browser.environment);
+  assert.match(browser.html(), /Đang giữ/);
+  const count = browser.requests.length;
+  await browser.poll();
+  assert.ok(browser.requests.length > count);
+  await browser.navigate("#new-job");
+  const intakeCount = browser.requests.length;
+  await browser.poll();
+  assert.equal(browser.requests.length, intakeCount);
+  await browser.navigate("#jobs/job-example");
+  browser.setDetail({ ...populatedFixture(), title: "Cập nhật từ máy", analysis: { ...populatedFixture().analysis, title: "Cập nhật từ máy" } });
+  await browser.poll();
+  assert.match(browser.html(), /<h1[^>]*>Cập nhật từ máy<\/h1>/);
+  browser.environment.document.hidden = true;
+  const hiddenCount = browser.requests.length;
+  await browser.poll();
+  assert.equal(browser.requests.length, hiddenCount);
+});
+
+test("polling defers DOM replacement during typing and applies the new artifacts afterwards", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.type("note-form", { content: "Đang ghi lại câu hỏi" });
+  browser.environment.document.activeElement = { closest: () => ({ id: "job-note" }) };
+  browser.setDetail({ ...populatedFixture(), analysis: { ...populatedFixture().analysis, title: "Tài liệu vừa cập nhật" } });
+  await browser.poll();
+  assert.doesNotMatch(browser.html(), /<h1[^>]*>Tài liệu vừa cập nhật/);
+  browser.environment.document.activeElement = undefined;
+  await browser.poll();
+  assert.match(browser.html(), /<h1[^>]*>Tài liệu vừa cập nhật/);
+  assert.match(browser.html(), />Đang ghi lại câu hỏi<\/textarea>/);
+});
+
+test("a note save finishing during return navigation cannot cancel the new detail load", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  let releaseSave!: () => void;
+  let releaseRead!: () => void;
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+  browser.beforeRequest((path, options) => path.endsWith("/note") ? options.method === "PUT" ? saveGate : readGate : Promise.resolve());
+  const saving = browser.submit("note-form", { content: "Lưu trong khi chuyển trang" });
+  await browser.navigate("#jobs");
+  const returning = browser.navigate("#jobs/job-example");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  releaseSave();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  releaseRead();
+  await Promise.all([saving, returning]);
+  assert.match(browser.html(), /<h1[^>]*>Backend Developer<\/h1>/);
+  assert.match(browser.html(), />Lưu trong khi chuyển trang<\/textarea>/);
+  assert.doesNotMatch(browser.html(), /aria-busy="true"/);
+});
+
+test("profile source import keeps text local and rejects unsupported or oversized files", async () => {
+  const browser = browserFixture("#profile");
+  await initializeBrowserApp(browser.environment);
+  const source = "# Nguồn CV\r\nVăn bản nguyên gốc\n";
+  await browser.submit("profile-source-form", { source: new File([source], "cv.md") });
+  const written = browser.requests.filter((request) => request.options.method === "POST");
+  assert.equal(written.length, 1);
+  assert.equal(written[0]?.path, "/api/profile/source");
+  assert.deepEqual(JSON.parse(written[0]?.options.body ?? "null"), { content: source });
+  assert.match(browser.notice.textContent, /Đã lưu tệp nguồn/);
+  for (const file of [new File(["text"], "cv.pdf"), new File(["x".repeat(1024 * 1024 + 1)], "cv.txt")]) {
+    await browser.submit("profile-source-form", { source: file });
+    assert.equal(browser.notice.role, "alert");
+  }
+  assert.equal(browser.requests.filter((request) => request.options.method === "POST").length, 1);
+});
+
+test("mobile navigation exposes links on open and returns focus to its button on Escape", async () => {
+  const browser = browserFixture("#overview", true);
+  await initializeBrowserApp(browser.environment);
+  assert.match(browser.html(), /aria-expanded="false"/);
+  assert.match(browser.html(), /<nav[^>]* hidden>/);
+  await browser.toggleMenu();
+  assert.equal(browser.menu.expanded, "true");
+  assert.equal(browser.navigation.hidden, false);
+  await browser.escapeMenu();
+  assert.equal(browser.menu.expanded, "false");
+  assert.equal(browser.navigation.hidden, true);
+  assert.equal(browser.menu.focused, true);
+});
+
 test("renderers escape source, note, profile, status and error text", () => {
   const attack = '\"><img src=x onerror="alert(1)"> & \' </textarea>';
   const detail = populatedFixture();
@@ -232,7 +383,7 @@ function priorityHref(html: string) {
   return html.match(/class="priority-job"[\s\S]*?<a href="([^"]+)"/)?.[1];
 }
 
-function browserFixture(initialHash: string) {
+function browserFixture(initialHash: string, narrow = false) {
   type Handler = (event?: any) => unknown;
   const pageEvents = new Map<string, Handler>();
   const windowEvents = new Map<string, Handler>();
@@ -242,6 +393,15 @@ function browserFixture(initialHash: string) {
   let navigation: Promise<unknown> = Promise.resolve();
   let focused = 0;
   let created: Record<string, any> | undefined;
+  let detail: Record<string, any> = populatedFixture();
+  let note = "Initial local note";
+  let currentForm: any;
+  let failure: number | undefined;
+  let requestHook: ((path: string, options: { method?: string }) => Promise<void>) | undefined;
+  let interval: Handler | undefined;
+  const notice = { textContent: "", className: "", role: "status", setAttribute(name: string, value: string) { if (name === "role") this.role = value; } };
+  const navigationElement = { hidden: narrow };
+  const menu = { id: "menu-toggle", expanded: String(!narrow), focused: false, setAttribute(name: string, value: string) { if (name === "aria-expanded") this.expanded = value; }, focus() { this.focused = true; } };
   const window = {
     location: {
       get hash() { return hash; },
@@ -251,43 +411,76 @@ function browserFixture(initialHash: string) {
       },
     },
     addEventListener: (name: string, handler: Handler) => windowEvents.set(name, handler),
+    setInterval(handler: Handler) { interval = handler; return 1; },
+    matchMedia: () => ({ matches: narrow }),
   };
   const environment = {
     window,
     document: {
+      hidden: false,
+      activeElement: undefined as { closest: (selector: string) => unknown } | undefined,
       querySelector(selector: string) {
         if (selector === "#app") return app;
         if (selector === "#page-heading") return { focus: () => { focused += 1; } };
         if (selector === ".skip-link") return { addEventListener() {} };
-        throw new Error(`Unexpected element: ${selector}`);
+        if (selector === "#notice") return notice;
+        if (selector === "#workspace-navigation") return navigationElement;
+        if (selector === "#menu-toggle") return menu;
+        if (selector === `#${currentForm?.id}`) return currentForm;
+        return null;
       },
     },
     FormData: class {
       form: { fields: Record<string, string> };
       constructor(form: { fields: Record<string, string> }) { this.form = form; }
       get(name: string) { return this.form.fields[name] ?? null; }
+      entries() { return Object.entries(this.form.fields)[Symbol.iterator](); }
     },
-    File: class {},
+    File,
     async fetch(path: string, options: { method?: string; body?: string } = {}) {
       requests.push({ path, options });
+      const noteAtRequestStart = note;
+      await requestHook?.(path, options);
+      if (failure) { const status = failure; failure = undefined; return Response.json({ error: "Failure" }, { status }); }
+      if (options.method === "POST" && path === "/api/profile/source") return new Response(null, { status: 204 });
+      if (options.method === "PUT" && path === "/api/jobs/job-example/note") {
+        note = JSON.parse(options.body ?? "null").content;
+        return Response.json({ content: note });
+      }
       if (options.method === "POST" && path === "/api/jobs") {
         const input = JSON.parse(options.body ?? "null");
         created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };
         return Response.json(created, { status: 201 });
       }
       if (path === "/api/summary") return Response.json({ jobs: [jobSummary(), ...(created ? [created] : [])], profile: profileFixture() });
-      if (path === "/api/jobs/job-example") return Response.json(populatedFixture());
-      if (path === "/api/jobs/job-example/note") return Response.json({ content: "Initial local note" });
+      if (path === "/api/jobs/job-example") return Response.json(detail);
+      if (path === "/api/jobs/job-example/note") return Response.json({ content: noteAtRequestStart });
       if (path === "/api/jobs/job-created" && created) return Response.json(created);
       if (path === "/api/jobs/job-created/note" && created) return Response.json({ content: null });
       throw new Error(`Unexpected request: ${options.method ?? "GET"} ${path}`);
     },
   };
   return {
-    environment, requests,
+    environment, requests, notice, menu, navigation: navigationElement,
+    async toggleMenu() { await pageEvents.get("click")?.({ target: { closest: () => menu } }); },
+    async escapeMenu() { await pageEvents.get("keydown")?.({ key: "Escape" }); },
+    failNext(status: number) { failure = status; },
+    beforeRequest(hook: typeof requestHook) { requestHook = hook; },
+    setDetail(value: Record<string, any>) { detail = value; },
     html: () => app.innerHTML,
     focusCount: () => focused,
     async navigate(value: string) { window.location.hash = value; await navigation; },
+    async refresh() { await pageEvents.get("click")?.({ target: { closest: () => ({ id: "refresh" }) } }); },
+    async poll() { await interval?.(); },
+    async type(id: string, fields: Record<string, string>) {
+      currentForm = { id, fields };
+      await pageEvents.get("input")?.({ target: { closest: () => currentForm } });
+    },
+    async submit(id: string, fields: Record<string, string | File>) {
+      currentForm = { id, fields, isConnected: true, querySelector: () => ({ disabled: false }) };
+      await pageEvents.get("submit")?.({ target: currentForm, preventDefault() {} });
+      await navigation;
+    },
     async submitJob(fields: Record<string, string>) {
       const form = { id: "job-form", fields, isConnected: true, querySelector: () => ({ disabled: false }) };
       await pageEvents.get("submit")?.({ target: form, preventDefault() {} });

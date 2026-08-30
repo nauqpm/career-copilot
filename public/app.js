@@ -5,37 +5,68 @@ import { mergeProfileSection, profileToSectionDraft } from "./profile-form.js";
 export function initializeBrowserApp(browser = globalThis) {
   const { document, window, fetch, FormData, File } = browser;
   const app = document.querySelector("#app");
-  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, profile: undefined, profileReady: false, note: "", error: "", notice: "" };
+  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, profile: undefined, profileReady: false, note: "", jobDraft: {}, error: "", notice: "", menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
   let loadVersion = 0;
   let pendingNotice;
   let profileDrafts = {};
   let profileSaving = false;
   let profileVersion = 0;
+  let noteDrafts = {};
+  let noteVersions = {};
+  let refreshing = false;
+  let savingForms = [];
 
   function render(focus = false) {
-    app.innerHTML = renderApplication(state);
+    const sourceInput = document.querySelector("#profile-source");
+    app.innerHTML = renderApplication({ ...state, note: noteDrafts[state.route.jobId] ?? state.note });
+    // File inputs cannot be repopulated. Keep the user's selected local file on refresh.
+    if (sourceInput?.files?.length && state.route.page === "profile") document.querySelector("#profile-source")?.replaceWith(sourceInput);
     if (focus) document.querySelector("#page-heading")?.focus();
   }
 
-  async function refresh(focus = false) {
+  async function refresh(focus = false, automatic = false) {
     const version = ++loadVersion;
     const loadedProfileVersion = profileVersion;
     const route = parseRoute(window.location.hash);
+    const loadedNoteVersion = noteVersions[route.jobId];
+    refreshing = true;
     try {
       const [loadedSummary, detail, note] = await Promise.all([
-        requestJson("/api/summary"),
+        route.page === "new-job" ? state.summary : requestJson("/api/summary"),
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}`) : undefined,
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`) : undefined,
       ]);
+      const hydratedSummary = await hydrateCvRecommendations(loadedSummary, route);
       if (version !== loadVersion) return;
-      const summary = loadedProfileVersion === profileVersion ? loadedSummary : { ...loadedSummary, profile: state.profile };
-      state = { ...state, route, summary, profile: summary.profile, profileReady: true, detail, note: note?.content ?? "", error: "" };
+      if (automatic && document.activeElement?.closest("a, button, input, textarea, select, summary")) return;
+      const summary = loadedProfileVersion === profileVersion ? hydratedSummary : { ...hydratedSummary, profile: state.profile };
+      const content = loadedNoteVersion === noteVersions[route.jobId] ? note?.content ?? "" : state.note;
+      const changed = JSON.stringify([state.summary, state.detail, state.note]) !== JSON.stringify([summary, detail, content]);
+      state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, note: content, error: automatic ? state.error : "", loading: false };
+      if (automatic && !changed) return;
       render(focus);
     } catch (error) {
       if (version !== loadVersion) return;
-      state = { ...state, route, detail: undefined, note: "", error: error.message };
-      render(focus);
+      state = { ...state, loading: false };
+      if (automatic) showNotice(error.message, true);
+      else { state = { ...state, route, error: error.message }; render(focus); }
+    } finally {
+      if (version === loadVersion) refreshing = false;
     }
+  }
+
+  async function hydrateCvRecommendations(summary, route) {
+    if (!["overview", "cvs"].includes(route.page)) return summary;
+    const drafts = summary.jobs.filter((job) => job.artifactStatus?.cvDraft === true);
+    const visibleIds = new Set((route.page === "overview" ? drafts.slice(0, 3) : drafts).map((job) => job.id));
+    const jobs = await Promise.all(summary.jobs.map(async (job) => {
+      if (!visibleIds.has(job.id)) return job;
+      try {
+        const detail = await requestJson(`/api/jobs/${encodeURIComponent(job.id)}`);
+        return { ...job, cvDraftRecommendation: detail.decision?.cvDraftRecommendation };
+      } catch { return { ...job, cvRecommendationError: true }; }
+    }));
+    return { ...summary, jobs };
   }
 
   app.addEventListener("click", (event) => {
@@ -54,18 +85,34 @@ export function initializeBrowserApp(browser = globalThis) {
       render();
       document.querySelector("#page-heading")?.focus();
     }
-    if (button?.id === "refresh") void refresh();
+    if (button?.id === "refresh") return refresh();
     if (button?.id === "menu-toggle") {
       const navigation = document.querySelector("#workspace-navigation");
       navigation.hidden = !navigation.hidden;
+      state = { ...state, menuOpen: !navigation.hidden };
       button.setAttribute("aria-expanded", String(!navigation.hidden));
     }
   });
 
   app.addEventListener("input", (event) => {
     const form = event.target.closest("form");
-    if (form?.id === "profile-form") rememberProfileDraft(form);
+    rememberDraft(form);
   });
+
+  app.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !window.matchMedia?.("(max-width: 760px)").matches || !state.menuOpen) return;
+    state = { ...state, menuOpen: false };
+    document.querySelector("#workspace-navigation").hidden = true;
+    const toggle = document.querySelector("#menu-toggle");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.focus();
+  });
+
+  function rememberDraft(form) {
+    if (form?.id === "profile-form") return rememberProfileDraft(form);
+    if (form?.id === "job-form") state = { ...state, jobDraft: Object.fromEntries(new FormData(form).entries()) };
+    if (form?.id === "note-form" && state.route.page === "job") noteDrafts = { ...noteDrafts, [state.route.jobId]: new FormData(form).get("content") };
+  }
 
   function rememberProfileDraft(form = document.querySelector("#profile-form")) {
     if (form?.id !== "profile-form" || !state.profileEditor) return;
@@ -84,20 +131,28 @@ export function initializeBrowserApp(browser = globalThis) {
     const form = event.target;
     if (!["job-form", "note-form", "profile-source-form", "profile-form"].includes(form.id)) return;
     event.preventDefault();
-    if (form.id === "profile-form" && profileSaving) return;
+    if (savingForms.includes(form.id) || state.loading) return;
+    savingForms = [...savingForms, form.id];
+    rememberDraft(form);
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
     const route = state.route;
     try {
       const values = new FormData(form);
       if (form.id === "job-form") {
+        if (!String(values.get("content") ?? "").trim()) throw new Error("Hãy nhập nội dung JD không rỗng trước khi lưu.");
         const job = await requestJson("/api/jobs", { method: "POST", body: JSON.stringify({ content: values.get("content"), sourceReference: values.get("sourceReference") }) });
         if (!form.isConnected) return;
+        state = { ...state, jobDraft: {} };
         const hash = `#jobs/${encodeURIComponent(job.id)}`;
         pendingNotice = { hash, message: "Đã lưu JD trên máy." };
         window.location.hash = hash;
       } else if (form.id === "note-form" && route.page === "job") {
+        const content = values.get("content");
+        if (!String(content ?? "").trim()) throw new Error("Hãy nhập ghi chú không rỗng trước khi lưu.");
         const saved = await requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`, { method: "PUT", body: JSON.stringify({ content: values.get("content") }) });
+        noteVersions = { ...noteVersions, [route.jobId]: (noteVersions[route.jobId] ?? 0) + 1 };
+        if (noteDrafts[route.jobId] === content) noteDrafts = Object.fromEntries(Object.entries(noteDrafts).filter(([id]) => id !== route.jobId));
         if (state.route.page === "job" && state.route.jobId === route.jobId) {
           state = { ...state, note: saved.content };
           showNotice("Đã lưu ghi chú trên máy.");
@@ -121,11 +176,13 @@ export function initializeBrowserApp(browser = globalThis) {
       } else if (form.id === "profile-source-form") {
         const file = values.get("source");
         if (!(file instanceof File) || !file.name) throw new Error("Hãy chọn tệp .txt hoặc .md trước khi lưu.");
+        if (!/\.(txt|md)$/i.test(file.name)) throw new Error("Chỉ hỗ trợ tệp nguồn .txt hoặc .md.");
+        if (file.size > 1024 * 1024) throw new Error("Tệp nguồn vượt quá 1 MiB. Hãy chọn tệp nhỏ hơn.");
         await requestJson("/api/profile/source", { method: "POST", body: JSON.stringify({ content: await file.text() }) });
         if (form.isConnected) showNotice("Đã lưu tệp nguồn hồ sơ trên máy.");
       }
     } catch (error) {
-      if (form.isConnected || (form.id === "profile-form" && state.route.page === "profile")) showNotice(error.message, true);
+      if (form.isConnected || (form.id === "profile-form" && state.route.page === "profile")) showNotice(`${error.message}${form.id === "profile-form" ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
     } finally {
       if (form.id === "profile-form") {
         profileSaving = false;
@@ -135,6 +192,7 @@ export function initializeBrowserApp(browser = globalThis) {
         if (currentForm?.id === "profile-form") currentForm.querySelector("fieldset").disabled = false;
       }
       button.disabled = false;
+      savingForms = savingForms.filter((id) => id !== form.id);
     }
   });
 
@@ -161,9 +219,14 @@ export function initializeBrowserApp(browser = globalThis) {
   window.addEventListener("hashchange", () => {
     const notice = pendingNotice?.hash === window.location.hash ? pendingNotice.message : "";
     pendingNotice = undefined;
-    state = { ...state, notice, error: "" };
+    state = { ...state, route: parseRoute(window.location.hash), detail: undefined, note: "", notice, error: "", loading: true, menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
+    render();
     return refresh(true);
   });
+  window.setInterval?.(() => {
+    if (document.hidden || refreshing || savingForms.length || document.activeElement?.closest("a, button, input, textarea, select, summary") || !["overview", "jobs", "job", "cvs"].includes(state.route.page)) return;
+    return refresh(false, true);
+  }, 15000);
   render();
   return refresh();
 }

@@ -1,12 +1,16 @@
 import { renderApplication } from "./render.js";
 import { parseRoute } from "./routes.js";
+import { mergeProfileSection, profileToSectionDraft } from "./profile-form.js";
 
 export function initializeBrowserApp(browser = globalThis) {
   const { document, window, fetch, FormData, File } = browser;
   const app = document.querySelector("#app");
-  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, profile: undefined, note: "", error: "", notice: "" };
+  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, profile: undefined, profileReady: false, note: "", error: "", notice: "" };
   let loadVersion = 0;
   let pendingNotice;
+  let profileDrafts = {};
+  let profileSaving = false;
+  let profileVersion = 0;
 
   function render(focus = false) {
     app.innerHTML = renderApplication(state);
@@ -15,15 +19,17 @@ export function initializeBrowserApp(browser = globalThis) {
 
   async function refresh(focus = false) {
     const version = ++loadVersion;
+    const loadedProfileVersion = profileVersion;
     const route = parseRoute(window.location.hash);
     try {
-      const [summary, detail, note] = await Promise.all([
+      const [loadedSummary, detail, note] = await Promise.all([
         requestJson("/api/summary"),
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}`) : undefined,
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`) : undefined,
       ]);
       if (version !== loadVersion) return;
-      state = { ...state, route, summary, profile: summary.profile, detail, note: note?.content ?? "", error: "" };
+      const summary = loadedProfileVersion === profileVersion ? loadedSummary : { ...loadedSummary, profile: state.profile };
+      state = { ...state, route, summary, profile: summary.profile, profileReady: true, detail, note: note?.content ?? "", error: "" };
       render(focus);
     } catch (error) {
       if (version !== loadVersion) return;
@@ -34,6 +40,20 @@ export function initializeBrowserApp(browser = globalThis) {
 
   app.addEventListener("click", (event) => {
     const button = event.target.closest("button");
+    if (button?.dataset?.editProfile && !profileSaving) {
+      if (!state.profileReady) return showNotice("Hồ sơ chưa tải xong. Hãy tải lại dữ liệu trước khi chỉnh sửa.", true);
+      rememberProfileDraft();
+      const section = button.dataset.editProfile;
+      state = { ...state, profileEditor: { section, draft: profileDrafts[section] ?? profileToSectionDraft(state.profile, section) }, error: "", notice: "" };
+      render();
+      document.querySelector("#profile-form textarea")?.focus();
+    }
+    if (button?.dataset?.cancelProfile && !profileSaving) {
+      profileDrafts = Object.fromEntries(Object.entries(profileDrafts).filter(([section]) => section !== button.dataset.cancelProfile));
+      state = { ...state, profileEditor: undefined, error: "", notice: "" };
+      render();
+      document.querySelector("#page-heading")?.focus();
+    }
     if (button?.id === "refresh") void refresh();
     if (button?.id === "menu-toggle") {
       const navigation = document.querySelector("#workspace-navigation");
@@ -42,6 +62,19 @@ export function initializeBrowserApp(browser = globalThis) {
     }
   });
 
+  app.addEventListener("input", (event) => {
+    const form = event.target.closest("form");
+    if (form?.id === "profile-form") rememberProfileDraft(form);
+  });
+
+  function rememberProfileDraft(form = document.querySelector("#profile-form")) {
+    if (form?.id !== "profile-form" || !state.profileEditor) return;
+    const { section, draft } = state.profileEditor;
+    const entered = { ...draft, ...Object.fromEntries(new FormData(form).entries()) };
+    profileDrafts = { ...profileDrafts, [section]: entered };
+    state = { ...state, profileEditor: { section, draft: entered } };
+  }
+
   document.querySelector(".skip-link").addEventListener("click", (event) => {
     event.preventDefault();
     document.querySelector("#page-heading")?.focus();
@@ -49,8 +82,9 @@ export function initializeBrowserApp(browser = globalThis) {
 
   app.addEventListener("submit", async (event) => {
     const form = event.target;
-    if (!["job-form", "note-form", "profile-source-form"].includes(form.id)) return;
+    if (!["job-form", "note-form", "profile-source-form", "profile-form"].includes(form.id)) return;
     event.preventDefault();
+    if (form.id === "profile-form" && profileSaving) return;
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
     const route = state.route;
@@ -68,6 +102,22 @@ export function initializeBrowserApp(browser = globalThis) {
           state = { ...state, note: saved.content };
           showNotice("Đã lưu ghi chú trên máy.");
         }
+      } else if (form.id === "profile-form") {
+        rememberProfileDraft(form);
+        const { section, draft } = state.profileEditor;
+        const profile = mergeProfileSection(state.profile, section, draft);
+        profileSaving = true;
+        state = { ...state, profileEditor: { ...state.profileEditor, saving: true } };
+        form.querySelector("fieldset").disabled = true;
+        const saved = await requestJson("/api/profile", { method: "PUT", body: JSON.stringify(profile) });
+        profileVersion += 1;
+        profileDrafts = Object.fromEntries(Object.entries(profileDrafts).filter(([key]) => key !== section));
+        state = { ...state, profile: saved, summary: { ...state.summary, profile: saved }, profileEditor: undefined };
+        if (state.route.page === "profile") {
+          state = { ...state, error: "", notice: "Đã lưu mục hồ sơ trên máy. Các nhóm khác được giữ nguyên." };
+          render();
+          document.querySelector("#page-heading")?.focus();
+        }
       } else if (form.id === "profile-source-form") {
         const file = values.get("source");
         if (!(file instanceof File) || !file.name) throw new Error("Hãy chọn tệp .txt hoặc .md trước khi lưu.");
@@ -75,8 +125,15 @@ export function initializeBrowserApp(browser = globalThis) {
         if (form.isConnected) showNotice("Đã lưu tệp nguồn hồ sơ trên máy.");
       }
     } catch (error) {
-      if (form.isConnected) showNotice(error.message, true);
+      if (form.isConnected || (form.id === "profile-form" && state.route.page === "profile")) showNotice(error.message, true);
     } finally {
+      if (form.id === "profile-form") {
+        profileSaving = false;
+        if (state.profileEditor) state = { ...state, profileEditor: { ...state.profileEditor, saving: false } };
+        form.querySelector("fieldset").disabled = false;
+        const currentForm = document.querySelector("#profile-form");
+        if (currentForm?.id === "profile-form") currentForm.querySelector("fieldset").disabled = false;
+      }
       button.disabled = false;
     }
   });

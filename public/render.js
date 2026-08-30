@@ -1,3 +1,5 @@
+import { profileToSectionDraft } from "./profile-form.js";
+
 const navigation = [
   ["overview", "Tổng quan"], ["jobs", "Job descriptions"], ["profile", "Hồ sơ cá nhân"],
   ["cvs", "CV theo vị trí"], ["new-job", "Thêm JD mới"],
@@ -7,10 +9,10 @@ const arrangementLabels = { onsite: "Tại nơi làm việc", hybrid: "Kết h�
 const employmentLabels = { "full-time": "Toàn thời gian", "part-time": "Bán thời gian", contract: "Hợp đồng", internship: "Thực tập", temporary: "Thời vụ" };
 const artifactLabels = [["source", "Nguồn JD"], ["analysis", "Phân tích"], ["decision", "Quyết định"], ["cvDraft", "Bản nháp CV"]];
 
-export function renderApplication({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, note, error, notice } = {}) {
+export function renderApplication({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note, error, notice } = {}) {
   return `${renderSidebar(route)}<main id="workspace" class="workspace-main">
     <p id="notice" class="notice${error ? " error" : ""}" role="${error ? "alert" : "status"}" aria-live="polite">${escapeHtml(error || notice || "")}</p>
-    ${renderPage({ route, summary, detail, profile, note })}
+    ${renderPage({ route, summary, detail, profile, profileEditor, note })}
   </main>`;
 }
 
@@ -25,11 +27,11 @@ export function renderSidebar(route = { page: "overview" }) {
   </aside>`;
 }
 
-export function renderPage({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, note } = {}) {
+export function renderPage({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note } = {}) {
   switch (route.page) {
     case "jobs": return renderJobs(summary);
     case "job": return renderJobDetail(detail, note);
-    case "profile": return renderProfile(profile);
+    case "profile": return renderProfile(profile, profileEditor);
     case "cvs": return renderCvLibrary(summary);
     case "new-job": return renderNewJob();
     default: return renderOverview(summary, profile);
@@ -76,16 +78,17 @@ export function renderJobDetail(detail, note = "") {
     </div>`;
 }
 
-export function renderProfile(profile) {
+export function renderProfile(profile, editor) {
   const contact = profile?.contact ?? {};
   const preferences = profile?.preferences ?? {};
   return `${pageHeader("Hồ sơ cá nhân", "Các thông tin gốc của bạn, dùng lại cho nhiều vị trí.")}
     <section class="card profile-summary">${renderProfileSnapshot(profile)}</section>
+    <p>Chọn “Chỉnh sửa”, cập nhật thông tin có thật rồi chọn “Lưu mục này”. Các nhóm khác được giữ nguyên.</p>
     <div class="profile-folders">
-      ${profileFolder("identity", "Liên hệ & giới thiệu", `<dl class="fact-grid">${optionalDefinitions([["Họ tên", contact.name], ["Email", contact.email], ["Điện thoại", contact.phone], ["Nơi ở", contact.location], ["Giới thiệu ngắn", profile?.headline], ["Tóm tắt", profile?.summary]])}</dl>${renderTextList("Liên kết", contact.links)}`)}
-      ${profileFolder("experience", "Vai trò & thành tựu", `${renderExperience(profile?.experience)}${renderEducation(profile?.education)}`)}
-      ${profileFolder("skills", "Kỹ năng & ngôn ngữ", `${renderTextList("Kỹ năng", profile?.skills)}${renderTextList("Ngôn ngữ", profile?.languages?.map((item) => [item.language, item.level].filter(Boolean).join(" — ")))}${renderTextList("Chứng chỉ", profile?.certifications)}`)}
-      ${profileFolder("preferences", "Điều kiện tìm việc", `${renderTextList("Loại hình công việc", preferences.employmentTypes?.map((value) => employmentLabels[value] ?? value))}${renderTextList("Hình thức làm việc", preferences.workArrangements?.map((value) => arrangementLabels[value] ?? value))}${renderTextList("Địa điểm", preferences.locations)}<dl class="fact-grid">${optionalDefinitions([["Mức lương tối thiểu", preferences.minimumSalary], ["Lịch làm việc", preferences.schedule], ["Ghi chú", preferences.notes]])}</dl>`)}
+      ${profileFolder("identity", "Liên hệ & giới thiệu", contact.name ?? profile?.headline ?? "Chưa có thông tin giới thiệu", `<dl class="fact-grid">${optionalDefinitions([["Họ tên", contact.name], ["Email", contact.email], ["Điện thoại", contact.phone], ["Nơi ở", contact.location], ["Giới thiệu ngắn", profile?.headline], ["Tóm tắt", profile?.summary]])}</dl>${renderTextList("Liên kết", contact.links)}`, profile, editor)}
+      ${profileFolder("experience", "Vai trò & thành tựu", `${profile?.experience?.length ?? 0} vai trò · ${profile?.education?.length ?? 0} học vấn`, `${renderExperience(profile?.experience)}${renderEducation(profile?.education)}`, profile, editor)}
+      ${profileFolder("skills", "Kỹ năng & ngôn ngữ", `${profile?.skills?.length ?? 0} kỹ năng · ${profile?.languages?.length ?? 0} ngôn ngữ · ${profile?.certifications?.length ?? 0} chứng chỉ`, `${renderTextList("Kỹ năng", profile?.skills)}${renderTextList("Ngôn ngữ", profile?.languages?.map((item) => [item.language, item.level].filter(Boolean).join(" — ")))}${renderTextList("Chứng chỉ", profile?.certifications)}`, profile, editor)}
+      ${profileFolder("preferences", "Điều kiện tìm việc", preferences.locations?.join(" · ") || "Địa điểm, lịch làm việc và mong muốn", `${renderTextList("Loại hình công việc", preferences.employmentTypes?.map((value) => employmentLabels[value] ?? value))}${renderTextList("Hình thức làm việc", preferences.workArrangements?.map((value) => arrangementLabels[value] ?? value))}${renderTextList("Địa điểm", preferences.locations)}<dl class="fact-grid">${optionalDefinitions([["Mức lương tối thiểu", preferences.minimumSalary], ["Lịch làm việc", preferences.schedule], ["Ghi chú", preferences.notes]])}</dl>`, profile, editor)}
     </div>
     <form id="profile-source-form" class="card source-import"><h2>Nguồn CV gốc</h2><p>Tệp nguồn được lưu riêng và không tự thay đổi hồ sơ.</p><label for="profile-source">Tệp CV nguồn (.txt hoặc .md)</label><input id="profile-source" name="source" type="file" accept=".txt,.md,text/plain,text/markdown" required><button type="submit">Lưu tệp nguồn trên máy</button></form>`;
 }
@@ -186,8 +189,21 @@ function renderProfileSnapshot(profile) {
   return `<p><strong>${escapeHtml(profile.contact?.name ?? profile.headline ?? "Hồ sơ đã lưu")}</strong>${profile.contact?.name && profile.headline ? ` — ${escapeHtml(profile.headline)}` : ""}</p><p>${profile.skills?.length ?? 0} kỹ năng · ${profile.experience?.length ?? 0} vai trò · ${profile.languages?.length ?? 0} ngôn ngữ</p>`;
 }
 
-function profileFolder(section, title, content) {
-  return `<details class="card profile-folder" data-profile-section="${section}"><summary>${escapeHtml(title)}</summary><div class="profile-folder-content">${content}<p class="empty-state">Chỉ lưu thông tin bạn đã xác nhận.</p><button type="button" data-edit-profile="${section}" disabled>Lưu mục này</button></div></details>`;
+function profileFolder(section, title, summary, content, profile, editor) {
+  const editing = editor?.section === section;
+  return `<details class="card profile-folder" data-profile-section="${section}"${editing ? " open" : ""}><summary>${escapeHtml(title)} <span class="folder-summary">— ${escapeHtml(summary)}</span></summary><div class="profile-folder-content">${editing ? renderProfileForm(section, { ...profileToSectionDraft(profile, section), ...editor.draft }, editor.saving) : `${content}<button type="button" data-edit-profile="${section}" aria-label="Chỉnh sửa ${escapeHtml(title)}">Chỉnh sửa</button>`}</div></details>`;
+}
+
+function renderProfileForm(section, draft, saving = false) {
+  const lineHelp = String.raw`Mỗi dòng một mục. Bỏ trống để xóa danh sách. Trong một mục, dùng \n cho xuống dòng, \\ cho dấu \ và \| cho dấu |.`;
+  const recordHelp = String.raw`Mỗi dòng một bản ghi. Giữ dấu | cho ô chưa biết; không đoán dữ liệu. Dùng \| cho dấu | trong nội dung, \\ cho dấu \ và \n cho xuống dòng trong một ô. Xóa dòng để bỏ bản ghi.`;
+  const field = (name, label, help = "", rows = 2) => `<div class="profile-field"><label for="profile-${name}">${label}</label><textarea id="profile-${name}" name="${name}" rows="${rows}"${help ? ` aria-describedby="profile-${name}-help"` : ""}>${escapeHtml(draft[name] ?? "")}</textarea>${help ? `<p id="profile-${name}-help" class="field-help">${escapeHtml(help)}</p>` : ""}</div>`;
+  let fields;
+  if (section === "identity") fields = `${field("name", "Họ tên", "", 1)}${field("email", "Email", "", 1)}${field("phone", "Điện thoại", "", 1)}${field("location", "Nơi ở", "", 1)}${field("links", "Liên kết", lineHelp, 3)}${field("headline", "Giới thiệu ngắn")}${field("summary", "Tóm tắt", "", 5)}`;
+  if (section === "experience") fields = `${field("experience", "Vai trò và thành tựu", `Định dạng: Vai trò | Đơn vị | Ngày bắt đầu | Ngày kết thúc | Thành tựu 1 | Thành tựu 2… Vai trò là bắt buộc; có thể để trống thành tựu. ${recordHelp}`, 7)}${field("education", "Học vấn", `Định dạng: Trường | Bằng cấp | Ngành học | Ngày tốt nghiệp. Điền ít nhất một ô. ${recordHelp}`, 5)}`;
+  if (section === "skills") fields = `${field("skills", "Kỹ năng", lineHelp, 5)}${field("languages", "Ngôn ngữ", `Định dạng: Ngôn ngữ | Trình độ. Ngôn ngữ là bắt buộc; có thể để trống trình độ. ${recordHelp}`, 4)}${field("certifications", "Chứng chỉ", lineHelp, 4)}`;
+  if (section === "preferences") fields = `${field("employmentTypes", "Loại hình công việc", "Mỗi dòng một mã: full-time (toàn thời gian), part-time (bán thời gian), contract (hợp đồng), internship (thực tập), temporary (thời vụ). Bỏ trống nếu chưa có yêu cầu.", 3)}${field("workArrangements", "Hình thức làm việc", "Mỗi dòng một mã: onsite (tại nơi làm việc), hybrid (kết hợp), remote (từ xa). Bỏ trống nếu chưa có yêu cầu.", 3)}${field("locations", "Địa điểm mong muốn", lineHelp, 3)}${field("minimumSalary", "Mức lương tối thiểu", "Ghi cả đơn vị tiền và kỳ trả lương nếu đã xác định; để trống nếu chưa biết.")}${field("schedule", "Lịch làm việc")}${field("notes", "Ghi chú", "", 4)}`;
+  return `<form id="profile-form" class="profile-section-form" data-profile-section="${section}"><p>Chỉ lưu thông tin bạn đã xác nhận. Bản đang nhập được giữ khi chuyển nhóm; chỉ nút lưu mới ghi xuống máy.</p><fieldset class="profile-fields" aria-label="Thông tin nhóm hồ sơ"${saving ? " disabled" : ""}>${fields}<div class="profile-form-actions"><button type="submit">Lưu mục này</button><button type="button" class="secondary" data-cancel-profile="${section}">Hủy chỉnh sửa nhóm này</button></div></fieldset></form>`;
 }
 
 function renderExperience(items) {

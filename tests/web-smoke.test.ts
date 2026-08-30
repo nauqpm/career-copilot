@@ -3,6 +3,50 @@ import test from "node:test";
 
 import { renderApplication, renderCvLibrary, renderJobDetail, renderJobs, renderNewJob, renderOverview, renderProfile } from "../public/render.js";
 import { parseRoute } from "../public/routes.js";
+import { initializeBrowserApp } from "../public/app.js";
+
+test("browser controller loads the initial job hash with its source and note", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+
+  assert.match(browser.html(), /<h1[^>]*>Backend Developer<\/h1>/);
+  assert.match(browser.html(), /Build reliable APIs\./);
+  assert.match(browser.html(), />Initial local note<\/textarea>/);
+  assert.deepEqual(browser.requests.map((request) => request.path), ["/api/summary", "/api/jobs/job-example", "/api/jobs/job-example/note"]);
+});
+
+test("browser controller follows hashchange navigation and focuses the new page", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.navigate("#profile");
+
+  assert.match(browser.html(), /<h1[^>]*>Hồ sơ cá nhân<\/h1>/);
+  assert.match(browser.html(), /href="#profile"[^>]*aria-current="page"/);
+  assert.doesNotMatch(browser.html(), /<h1[^>]*>Backend Developer<\/h1>/);
+  assert.equal(browser.focusCount(), 1);
+
+  await browser.navigate("#jobs/job-example");
+  assert.match(browser.html(), /<h1[^>]*>Backend Developer<\/h1>/);
+  assert.match(browser.html(), />Initial local note<\/textarea>/);
+  assert.equal(browser.focusCount(), 2);
+});
+
+test("browser controller keeps creation confirmation on the new detail route only", async () => {
+  const browser = browserFixture("#new-job");
+  await initializeBrowserApp(browser.environment);
+  await browser.submitJob({ content: "Original pasted JD", sourceReference: "Local source" });
+
+  assert.equal(browser.environment.window.location.hash, "#jobs/job-created");
+  assert.match(browser.html(), /<h1[^>]*>JD chưa có tiêu đề<\/h1>/);
+  assert.match(browser.html(), /Original pasted JD/);
+  assert.match(browser.html(), /role="status"[^>]*>Đã lưu JD trên máy\.</);
+  const saved = browser.requests.find((request) => request.options.method === "POST");
+  assert.equal(saved?.path, "/api/jobs");
+  assert.deepEqual(JSON.parse(saved?.options.body ?? "null"), { content: "Original pasted JD", sourceReference: "Local source" });
+
+  await browser.navigate("#jobs");
+  assert.doesNotMatch(browser.html(), /Đã lưu JD trên máy\./);
+});
 
 test("hash routes select all six screens and preserve decoded valid job IDs", () => {
   const routes = [
@@ -186,6 +230,70 @@ function jobSummary(overrides: Record<string, unknown> = {}) {
 
 function priorityHref(html: string) {
   return html.match(/class="priority-job"[\s\S]*?<a href="([^"]+)"/)?.[1];
+}
+
+function browserFixture(initialHash: string) {
+  type Handler = (event?: any) => unknown;
+  const pageEvents = new Map<string, Handler>();
+  const windowEvents = new Map<string, Handler>();
+  const requests: { path: string; options: { method?: string; body?: string } }[] = [];
+  const app = { innerHTML: "", addEventListener: (name: string, handler: Handler) => pageEvents.set(name, handler) };
+  let hash = initialHash;
+  let navigation: Promise<unknown> = Promise.resolve();
+  let focused = 0;
+  let created: Record<string, any> | undefined;
+  const window = {
+    location: {
+      get hash() { return hash; },
+      set hash(value: string) {
+        hash = value;
+        navigation = Promise.resolve().then(() => windowEvents.get("hashchange")?.());
+      },
+    },
+    addEventListener: (name: string, handler: Handler) => windowEvents.set(name, handler),
+  };
+  const environment = {
+    window,
+    document: {
+      querySelector(selector: string) {
+        if (selector === "#app") return app;
+        if (selector === "#page-heading") return { focus: () => { focused += 1; } };
+        if (selector === ".skip-link") return { addEventListener() {} };
+        throw new Error(`Unexpected element: ${selector}`);
+      },
+    },
+    FormData: class {
+      form: { fields: Record<string, string> };
+      constructor(form: { fields: Record<string, string> }) { this.form = form; }
+      get(name: string) { return this.form.fields[name] ?? null; }
+    },
+    File: class {},
+    async fetch(path: string, options: { method?: string; body?: string } = {}) {
+      requests.push({ path, options });
+      if (options.method === "POST" && path === "/api/jobs") {
+        const input = JSON.parse(options.body ?? "null");
+        created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };
+        return Response.json(created, { status: 201 });
+      }
+      if (path === "/api/summary") return Response.json({ jobs: [jobSummary(), ...(created ? [created] : [])], profile: profileFixture() });
+      if (path === "/api/jobs/job-example") return Response.json(populatedFixture());
+      if (path === "/api/jobs/job-example/note") return Response.json({ content: "Initial local note" });
+      if (path === "/api/jobs/job-created" && created) return Response.json(created);
+      if (path === "/api/jobs/job-created/note" && created) return Response.json({ content: null });
+      throw new Error(`Unexpected request: ${options.method ?? "GET"} ${path}`);
+    },
+  };
+  return {
+    environment, requests,
+    html: () => app.innerHTML,
+    focusCount: () => focused,
+    async navigate(value: string) { window.location.hash = value; await navigation; },
+    async submitJob(fields: Record<string, string>) {
+      const form = { id: "job-form", fields, isConnected: true, querySelector: () => ({ disabled: false }) };
+      await pageEvents.get("submit")?.({ target: form, preventDefault() {} });
+      await navigation;
+    },
+  };
 }
 
 function profileFixture() {

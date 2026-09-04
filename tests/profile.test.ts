@@ -7,6 +7,22 @@ import test from "node:test";
 import { runCli } from "../src/cli.js";
 import { parseCandidateProfile } from "../src/profile/schema.js";
 import { readCandidateProfile, saveCandidateProfile, saveProfileSource } from "../src/profile/storage.js";
+import { ConflictError, readArtifact } from "../src/workspace/artifacts.js";
+
+test("profile and source saves reject stale updates and accept explicitly observed revisions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-"));
+  await saveCandidateProfile(root, profileFixture());
+  const original = await readArtifact(join(root, "data", "profile", "candidate-profile.json"));
+  await assert.rejects(saveCandidateProfile(root, { ...profileFixture(), headline: "Changed" }), ConflictError);
+  await saveCandidateProfile(root, { ...profileFixture(), headline: "Changed" }, original!.hash);
+  assert.equal((await readCandidateProfile(root))?.headline, "Changed");
+  await assert.rejects(saveCandidateProfile(root, profileFixture(), original!.hash), ConflictError);
+  await saveProfileSource(root, "original");
+  const source = await readArtifact(join(root, "data", "profile", "source.md"));
+  await assert.rejects(saveProfileSource(root, "clobber"), ConflictError);
+  await saveProfileSource(root, "updated", source!.hash);
+  assert.equal(await readFile(join(root, "data", "profile", "source.md"), "utf8"), "updated\n");
+});
 
 test("parses a candidate profile with job-search constraints", () => {
   const profile = parseCandidateProfile({

@@ -1,5 +1,7 @@
 # Slice 3 — Job Decision
 
+> **Historical reference — M0, 2026-09-04:** This document records prior implementation/design work. Its scope exclusions, task checkboxes and verification results are historical; do not replay it as a new plan or treat old test results as current. See the [active M0 baseline](../docs/specs/local-it-career-workstation/27-m0-baseline-and-delivery-inventory.md) for current direction, reuse inventory and remaining work.
+
 ## Status
 
 Implemented locally on branch `slice-3-job-decision`, branched from Slice 2. No branch was pushed and no private career data was added to Git.

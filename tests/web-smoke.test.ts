@@ -5,6 +5,98 @@ import { renderApplication, renderCvLibrary, renderJobDetail, renderJobs, render
 import { parseRoute } from "../public/routes.js";
 import { initializeBrowserApp } from "../public/app.js";
 
+test("profile editing keeps its loaded base and token after refresh, including conflict retry", async () => {
+  const browser = browserFixture("#profile");
+  await initializeBrowserApp(browser.environment);
+  await browser.editProfile("identity");
+  await browser.type("profile-form", { name: "My unsaved name" });
+  browser.setProfile({ ...profileFixture(), skills: ["External skill"] }, "profile-external");
+  await browser.refresh();
+  browser.failNext(409);
+  await browser.submit("profile-form");
+  let writes = browser.requests.filter((request) => request.options.method === "PUT");
+  assert.equal(writes[0]?.options.headers?.["If-Match"], '"profile-original"');
+  assert.deepEqual(JSON.parse(writes[0]?.options.body ?? "null").skills, ["Research"]);
+  assert.match(browser.notice.textContent, /mở lại|tải lại/i);
+  assert.match(browser.html(), /My unsaved name/);
+  await browser.submit("profile-form");
+  writes = browser.requests.filter((request) => request.options.method === "PUT");
+  assert.equal(writes[1]?.options.headers?.["If-Match"], '"profile-original"');
+});
+
+test("note drafts retain the loaded token across refresh and conflict", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.type("note-form", { content: "Unsaved note" });
+  browser.setNote("External note", "note-external");
+  await browser.refresh();
+  browser.failNext(409);
+  await browser.submit("note-form", { content: "Unsaved note" });
+  assert.equal(browser.requests.find((request) => request.options.method === "PUT")?.options.headers?.["If-Match"], '"note-original"');
+  assert.match(browser.notice.textContent, /mở lại|tải lại/i);
+  assert.match(browser.html(), /Unsaved note/);
+});
+
+test("a delayed note conflict remains visible after refresh replaces the form", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  browser.beforeRequest((_path, options) => options.method === "PUT" ? pending : Promise.resolve());
+  const saving = browser.submit("note-form", { content: "Preserved conflict draft" });
+  await browser.refresh();
+  browser.failNext(409);
+  release();
+  await saving;
+  assert.match(browser.notice.textContent, /Dữ liệu đã thay đổi/);
+  assert.match(browser.html(), /Preserved conflict draft/);
+});
+
+test("source upload sends the loaded absence token", async () => {
+  const browser = browserFixture("#profile");
+  await initializeBrowserApp(browser.environment);
+  await browser.submit("profile-source-form", { source: new File(["Source"], "cv.md") });
+  assert.equal(browser.requests.find((request) => request.options.method === "POST")?.options.headers?.["If-Match"], '"missing"');
+});
+
+test("source selection keeps its base across refresh and only advances after a successful save", async () => {
+  const browser = browserFixture("#profile");
+  await initializeBrowserApp(browser.environment);
+  await browser.selectSource();
+  browser.setSourceHash("external-source");
+  await browser.refresh();
+  browser.failNext(409);
+  await browser.submit("profile-source-form", { source: new File(["Source"], "cv.md") });
+  await browser.submit("profile-source-form", { source: new File(["Source"], "cv.md") });
+  await browser.submit("profile-source-form", { source: new File(["New source"], "cv.md") });
+  const writes = browser.requests.filter((request) => request.options.method === "POST");
+  assert.deepEqual(writes.map((request) => request.options.headers?.["If-Match"]), ['"missing"', '"missing"', '"source-saved"']);
+});
+
+test("missing profile version fails closed without sending a mutation", async () => {
+  const browser = browserFixture("#profile");
+  browser.setProfile(profileFixture(), undefined);
+  await initializeBrowserApp(browser.environment);
+  await browser.editProfile("identity");
+  await browser.submit("profile-form", { name: "Keep my draft" });
+  assert.equal(browser.requests.filter((request) => request.options.method === "PUT").length, 0);
+  assert.match(browser.notice.textContent, /phiên bản dữ liệu/);
+});
+
+test("corrupt profile prevents editing while other jobs and escaped warnings remain visible", async () => {
+  const browser = browserFixture("#jobs");
+  browser.setProfileError("Invalid <profile>");
+  await initializeBrowserApp(browser.environment);
+  assert.match(browser.html(), /Backend Developer/);
+  assert.match(browser.html(), /Invalid &lt;profile&gt;/);
+  await browser.navigate("#profile");
+  await browser.editProfile("identity");
+  assert.doesNotMatch(browser.html(), /id="profile-form"/);
+  assert.doesNotMatch(browser.html(), /Chưa có hồ sơ cá nhân/);
+  const html = renderJobs({ jobs: [jobSummary({ invalidSourceData: "Invalid <raw>" })] });
+  assert.match(html, /Invalid &lt;raw&gt;/);
+});
+
 test("browser controller loads the initial job hash with its source and note", async () => {
   const browser = browserFixture("#jobs/job-example");
   await initializeBrowserApp(browser.environment);
@@ -493,7 +585,7 @@ function browserFixture(initialHash: string, narrow = false) {
   type Handler = (event?: any) => unknown;
   const pageEvents = new Map<string, Handler>();
   const windowEvents = new Map<string, Handler>();
-  const requests: { path: string; options: { method?: string; body?: string } }[] = [];
+  const requests: { path: string; options: { method?: string; body?: string; headers?: Record<string, string> } }[] = [];
   let currentForm: any;
   let renderedHtml = "";
   const app = {
@@ -507,6 +599,7 @@ function browserFixture(initialHash: string, narrow = false) {
           sourceReference: decodeHtml(html.match(/<input[^>]*id="source-reference"[^>]*value="([^"]*)"/)?.[1] ?? ""),
         });
       }
+      if (html.includes('id="profile-form"')) currentForm = makeForm("profile-form", Object.fromEntries([...html.matchAll(/<textarea[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/g)].map((match) => [match[1], decodeHtml(match[2])])));
     },
     addEventListener: (name: string, handler: Handler) => pageEvents.set(name, handler),
   };
@@ -518,6 +611,11 @@ function browserFixture(initialHash: string, narrow = false) {
   let summaryJobs: Record<string, any>[] | undefined;
   let jobDetails: Record<string, Record<string, any>> = {};
   let note = "Initial local note";
+  let profile = profileFixture();
+  let profileHash: string | undefined = "profile-original";
+  let sourceHash: string | null = null;
+  let profileError: string | undefined;
+  let noteHash = "note-original";
   let failure: number | undefined;
   let requestHook: ((path: string, options: { method?: string }) => Promise<void>) | undefined;
   let interval: Handler | undefined;
@@ -560,26 +658,33 @@ function browserFixture(initialHash: string, narrow = false) {
       entries() { return Object.entries(this.fields)[Symbol.iterator](); }
     },
     File,
-    async fetch(path: string, options: { method?: string; body?: string } = {}) {
+    async fetch(path: string, options: { method?: string; body?: string; headers?: Record<string, string> } = {}) {
       requests.push({ path, options });
       const noteAtRequestStart = note;
+      const noteHashAtRequestStart = noteHash;
       await requestHook?.(path, options);
       if (failure) { const status = failure; failure = undefined; return Response.json({ error: "Failure" }, { status }); }
-      if (options.method === "POST" && path === "/api/profile/source") return new Response(null, { status: 204 });
+      if (options.method === "POST" && path === "/api/profile/source") return new Response(null, { status: 204, headers: { ETag: '"source-saved"' } });
+      if (options.method === "PUT" && path === "/api/profile") {
+        profile = JSON.parse(options.body ?? "null");
+        profileHash = "profile-saved";
+        return Response.json(profile, { headers: { ETag: `"${profileHash}"` } });
+      }
       if (options.method === "PUT" && path === "/api/jobs/job-example/note") {
         note = JSON.parse(options.body ?? "null").content;
-        return Response.json({ content: note });
+        noteHash = "note-saved";
+        return Response.json({ content: note }, { headers: { ETag: `"${noteHash}"` } });
       }
       if (options.method === "POST" && path === "/api/jobs") {
         const input = JSON.parse(options.body ?? "null");
         created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };
         return Response.json(created, { status: 201 });
       }
-      if (path === "/api/summary") return Response.json({ jobs: summaryJobs ?? [jobSummary(), ...(created ? [created] : [])], profile: profileFixture() });
+      if (path === "/api/summary") return Response.json({ jobs: summaryJobs ?? [jobSummary(), ...(created ? [created] : [])], profile, profileHash, profileSourceHash: sourceHash, profileError });
       if (path === "/api/jobs/job-example") return Response.json(detail);
       const matchedJob = path.match(/^\/api\/jobs\/([^/]+)$/);
       if (matchedJob && jobDetails[decodeURIComponent(matchedJob[1])]) return Response.json(jobDetails[decodeURIComponent(matchedJob[1])]);
-      if (path === "/api/jobs/job-example/note") return Response.json({ content: noteAtRequestStart });
+      if (path === "/api/jobs/job-example/note") return Response.json({ content: noteAtRequestStart }, { headers: { ETag: `"${noteHashAtRequestStart}"` } });
       if (path === "/api/jobs/job-created" && created) return Response.json(created);
       if (path === "/api/jobs/job-created/note" && created) return Response.json({ content: null });
       throw new Error(`Unexpected request: ${options.method ?? "GET"} ${path}`);
@@ -602,6 +707,12 @@ function browserFixture(initialHash: string, narrow = false) {
   return {
     environment, requests, notice, menu, navigation: navigationElement,
     form: () => currentForm,
+    async editProfile(section: string) { await pageEvents.get("click")?.({ target: { closest: () => ({ dataset: { editProfile: section } }) } }); },
+    setProfile(value: typeof profile, hash: string | undefined) { profile = value; profileHash = hash; },
+    setSourceHash(value: string) { sourceHash = value; },
+    async selectSource() { await pageEvents.get("change")?.({ target: { id: "profile-source" } }); },
+    setProfileError(value: string) { profileError = value; },
+    setNote(value: string, hash: string) { note = value; noteHash = hash; },
     async toggleMenu() { await pageEvents.get("click")?.({ target: { closest: () => menu } }); },
     async escapeMenu() { await pageEvents.get("keydown")?.({ key: "Escape" }); },
     failNext(status: number) { failure = status; },

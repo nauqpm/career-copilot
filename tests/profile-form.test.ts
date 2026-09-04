@@ -272,13 +272,14 @@ test("the local profile endpoint stores a complete section merge and rejects inv
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const url = `http://127.0.0.1:${address.port}/api/profile`;
-  const original = await (await fetch(url)).json();
+  const originalResponse = await fetch(url);
+  const original = await originalResponse.json();
   const merged = mergeProfileSection(original, "identity", { name: "Confirmed new name" });
-  const saved = await fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(merged) });
+  const saved = await fetch(url, { method: "PUT", headers: { "content-type": "application/json", "If-Match": originalResponse.headers.get("ETag")! }, body: JSON.stringify(merged) });
   assert.equal(saved.status, 200);
   assert.deepEqual(await saved.json(), { ...completeProfile(), contact: { ...completeProfile().contact, name: "Confirmed new name" } });
   const invalid = mergeProfileSection(merged, "preferences", { workArrangements: "unsupported" });
-  const rejected = await fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(invalid) });
+  const rejected = await fetch(url, { method: "PUT", headers: { "content-type": "application/json", "If-Match": saved.headers.get("ETag")! }, body: JSON.stringify(invalid) });
   assert.equal(rejected.status, 400);
   assert.deepEqual(await (await fetch(url)).json(), merged);
 });
@@ -337,17 +338,19 @@ function profileBrowser(failure?: number | string, beforeRequest?: (path: string
       get(name: string) { return this.form.fields[name] ?? null; }
     },
     File: class {},
-    async fetch(path: string, options: { method?: string; body?: string } = {}) {
+    async fetch(path: string, options: { method?: string; body?: string; headers?: Record<string, string> } = {}) {
       const loadedProfile = profile;
+      const loadedHash = `profile-${saved.length}`;
       await beforeRequest?.(path);
-      if (path === "/api/summary") return Response.json({ jobs: [], profile: loadedProfile });
+      if (path === "/api/summary") return Response.json({ jobs: [], profile: loadedProfile, profileHash: loadedHash, profileSourceHash: null });
       assert.equal(path, "/api/profile");
       assert.equal(options.method, "PUT");
+      assert.equal(options.headers?.["If-Match"], `"profile-${saved.length}"`);
       if (failure === "network") throw new Error("offline");
       if (typeof failure === "number") return Response.json({ error: "Invalid profile" }, { status: failure });
       profile = parseCandidateProfile(JSON.parse(options.body ?? "null"));
       saved.push(profile);
-      return Response.json(profile);
+      return Response.json(profile, { headers: { ETag: `"profile-${saved.length}"` } });
     },
   };
   return {

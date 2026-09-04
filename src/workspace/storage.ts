@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readdir, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { assertSafePath, readArtifact, writeArtifact } from "./artifacts.js";
 
 import { type JobDecision, parseJobDecision } from "../decision/schema.js";
 import { type RawJobContent } from "../job/input.js";
@@ -27,6 +28,7 @@ export interface WorkspaceJobSummary {
   hasAnalysis: boolean;
   hasCvDraft: boolean;
   invalidDerivedData?: string;
+  invalidSourceData?: string;
   artifactStatus: WorkspaceArtifactStatus;
   updatedAt: string;
   cvDraftUpdatedAt?: string;
@@ -56,16 +58,17 @@ export async function createPastedJob(root: string, input: PastedJob): Promise<W
   const directory = jobDirectory(root, id);
   const raw: RawJobContent = { content, source: { type: "text", value: sourceReference } };
 
+  await assertSafePath(directory);
   await mkdir(directory, { recursive: true });
-  await Promise.all([
-    writeAtomically(join(directory, "source.md"), withFinalNewline(input.content)),
-    writeAtomically(join(directory, "raw.json"), `${JSON.stringify(raw, null, 2)}\n`),
-  ]);
+  // Source is durable before raw metadata; interrupted creation remains a visible repair row.
+  await writeArtifact(join(directory, "source.md"), withFinalNewline(input.content));
+  await writeArtifact(join(directory, "raw.json"), `${JSON.stringify(raw, null, 2)}\n`);
 
   return readWorkspaceSummary(root, id);
 }
 
 export async function listWorkspaceJobs(root: string): Promise<WorkspaceJobSummary[]> {
+  await assertSafePath(jobsDirectory(root));
   let entries;
   try {
     entries = await readdir(jobsDirectory(root), { withFileTypes: true });
@@ -74,8 +77,13 @@ export async function listWorkspaceJobs(root: string): Promise<WorkspaceJobSumma
     throw error;
   }
 
-  const ids = entries.filter((entry) => entry.isDirectory() && jobIdPattern.test(entry.name)).map((entry) => entry.name);
-  const summaries = await Promise.all(ids.map((id) => readWorkspaceSummary(root, id)));
+  const ids = entries.filter((entry) => (entry.isDirectory() || entry.isSymbolicLink()) && jobIdPattern.test(entry.name)).map((entry) => entry.name);
+  const summaries = await Promise.all(ids.map(async (id): Promise<WorkspaceJobSummary> => {
+    try { return await readWorkspaceSummary(root, id); }
+    catch {
+      return { id, sourcePreview: "Nguồn JD cần kiểm tra", invalidSourceData: "Không đọc được nguồn JD. Dữ liệu gốc được giữ nguyên; hãy kiểm tra hoặc khôi phục từ backup.", hasAnalysis: false, hasCvDraft: false, artifactStatus: { source: false, analysis: false, decision: false, cvDraft: false }, updatedAt: "" };
+    }
+  }));
   return summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
 }
 
@@ -99,19 +107,19 @@ export function getWorkspaceJobNotePath(root: string, id: string): string {
 }
 
 export async function readWorkspaceJobNote(root: string, jobId: string): Promise<string | undefined> {
-  const directory = await requireExistingJobDirectory(root, jobId);
-  try {
-    return requireText(await readFile(join(directory, "notes.md"), "utf8"), "Note content");
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return undefined;
-    throw error;
-  }
+  return (await readWorkspaceJobNoteSnapshot(root, jobId))?.content;
 }
 
-export async function saveWorkspaceJobNote(root: string, jobId: string, content: string): Promise<void> {
+export async function readWorkspaceJobNoteSnapshot(root: string, jobId: string): Promise<{content: string; hash: string} | undefined> {
+  const directory = await requireExistingJobDirectory(root, jobId);
+  const artifact = await readArtifact(join(directory, "notes.md"));
+  return artifact === undefined ? undefined : { ...artifact, content: requireText(artifact.content, "Note content") };
+}
+
+export async function saveWorkspaceJobNote(root: string, jobId: string, content: string, expectedHash: string | null = null): Promise<void> {
   const directory = await requireExistingJobDirectory(root, jobId);
   const normalized = requireText(content, "Note content");
-  await writeAtomically(join(directory, "notes.md"), withFinalNewline(normalized));
+  await writeArtifact(join(directory, "notes.md"), withFinalNewline(normalized), expectedHash);
 }
 
 async function readWorkspaceSummary(root: string, id: string): Promise<WorkspaceJobSummary> {
@@ -213,6 +221,7 @@ async function readWorkspaceArtifactMetadata(directory: string): Promise<{
 
 async function readArtifactStat(path: string): Promise<Date | undefined> {
   try {
+    await assertSafePath(path);
     return (await stat(path)).mtime;
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return undefined;
@@ -241,7 +250,9 @@ async function readOptionalValidatedJson<T>(
 
 async function readOptionalText(path: string, label: string, failures: string[]): Promise<string | undefined> {
   try {
-    const content = await readFile(path, "utf8");
+    const artifact = await readArtifact(path);
+    if (artifact === undefined) return undefined;
+    const content = artifact.content;
     if (content.trim()) return content;
     failures.push(`${label} is empty.`);
     return undefined;
@@ -253,7 +264,9 @@ async function readOptionalText(path: string, label: string, failures: string[])
 }
 
 async function readJson(path: string): Promise<unknown> {
-  return JSON.parse(await readFile(path, "utf8")) as unknown;
+  const artifact = await readArtifact(path);
+  if (artifact === undefined) throw Object.assign(new Error("Artifact missing"), { code: "ENOENT" });
+  return JSON.parse(artifact.content) as unknown;
 }
 
 function parseRawJobContent(value: unknown): RawJobContent {
@@ -282,6 +295,7 @@ function jobDirectory(root: string, id: string): string {
 
 async function requireExistingJobDirectory(root: string, id: string): Promise<string> {
   const directory = jobDirectory(root, id);
+  await assertSafePath(directory);
   try {
     if ((await stat(directory)).isDirectory()) return directory;
   } catch (error) {
@@ -297,13 +311,6 @@ function requireText(value: string, field: string): string {
 
 function withFinalNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
-}
-
-async function writeAtomically(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, content, "utf8");
-  await rename(temporary, path);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

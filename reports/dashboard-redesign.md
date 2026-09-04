@@ -1,5 +1,7 @@
 # Dashboard redesign delivery report
 
+> **Historical reference — M0, 2026-09-04:** This document records prior implementation/design work. Its scope exclusions, task checkboxes and verification results are historical; do not replay it as a new plan or treat old test results as current. See the [active M0 baseline](../docs/specs/local-it-career-workstation/27-m0-baseline-and-delivery-inventory.md) for current direction, reuse inventory and remaining work.
+
 **Status:** Delivered locally on `slice-4-local-workspace`.
 
 This report covers the accepted [design](../docs/superpowers/specs/2026-08-29-career-copilot-dashboard-redesign-design.md) and [implementation plan](../docs/superpowers/plans/2026-08-29-career-copilot-dashboard-redesign.md). It documents the local dashboard only; it does not change the Codex/CLI semantic workflow.

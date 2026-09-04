@@ -1,5 +1,7 @@
 # Career Copilot Dashboard Redesign Implementation Plan
 
+> **Historical reference — M0, 2026-09-04:** This document records prior implementation/design work. Its scope exclusions, task checkboxes and verification results are historical; do not replay it as a new plan or treat old test results as current. See the [active M0 baseline](../../specs/local-it-career-workstation/27-m0-baseline-and-delivery-inventory.md) for current direction, reuse inventory and remaining work.
+
 > **For Codex:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Replace the current utility-style local web screen with a Vietnamese, dark, minimalist dashboard that lets one user browse locally stored JDs, inspect each JD without reading JSON, maintain their personal profile, and review per-JD CV drafts.

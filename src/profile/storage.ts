@@ -1,26 +1,21 @@
-import { readFile, mkdir, rename, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { readArtifact, writeArtifact } from "../workspace/artifacts.js";
+import { join, resolve } from "node:path";
 
 import { type CandidateProfile, parseCandidateProfile } from "./schema.js";
 
 export async function readCandidateProfile(root: string): Promise<CandidateProfile | undefined> {
-  try {
-    return parseCandidateProfile(JSON.parse(await readFile(candidateProfilePath(root), "utf8")) as unknown);
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return undefined;
-    throw error;
-  }
+  const artifact = await readArtifact(candidateProfilePath(root));
+  return artifact ? parseCandidateProfile(JSON.parse(artifact.content) as unknown) : undefined;
 }
 
-export async function saveCandidateProfile(root: string, profile: CandidateProfile): Promise<void> {
+export async function saveCandidateProfile(root: string, profile: CandidateProfile, expectedHash: string | null = null): Promise<void> {
   const validated = parseCandidateProfile(profile);
-  await writeAtomically(candidateProfilePath(root), `${JSON.stringify(validated, null, 2)}\n`);
+  await writeArtifact(candidateProfilePath(root), `${JSON.stringify(validated, null, 2)}\n`, expectedHash);
 }
 
-export async function saveProfileSource(root: string, source: string): Promise<void> {
+export async function saveProfileSource(root: string, source: string, expectedHash: string | null = null): Promise<void> {
   if (!source.trim()) throw new Error("Profile source must not be empty");
-  await writeAtomically(profileSourcePath(root), source.endsWith("\n") ? source : `${source}\n`);
+  await writeArtifact(profileSourcePath(root), source.endsWith("\n") ? source : `${source}\n`, expectedHash);
 }
 
 function candidateProfilePath(root: string): string {
@@ -33,15 +28,4 @@ function profileSourcePath(root: string): string {
 
 function profileDirectory(root: string): string {
   return resolve(root, "data", "profile");
-}
-
-async function writeAtomically(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, content, "utf8");
-  await rename(temporary, path);
-}
-
-function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

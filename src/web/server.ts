@@ -60,7 +60,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       return sendJson(response, 201, job);
     }
     if (method === "GET" && path === "/api/profile") {
-      const snapshot = await readProfileSnapshot(root);
+      let snapshot;
+      try { snapshot = await readProfileSnapshot(root); } catch (error) { throw new CorruptionError(error); }
       setVersion(response, snapshot.hash);
       return sendJson(response, 200, snapshot.profile);
     }
@@ -73,7 +74,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) return sendJson(response, 404, { error: "Not found" });
       const artifact = await readArtifact(join(root, "data", "profile", "revisions", `${id}.json`));
       if (!artifact) return sendJson(response, 404, { error: "Not found" });
-      const revision = parseProfileRevision(JSON.parse(artifact.content) as unknown);
+      let revision;
+      try { revision = parseProfileRevision(JSON.parse(artifact.content) as unknown); } catch (error) { throw new CorruptionError(error); }
       if (revision.id !== id) return sendJson(response, 404, { error: "Not found" });
       setVersion(response, artifact.hash);
       return sendJson(response, 200, revision);
@@ -209,6 +211,7 @@ function sendError(response: ServerResponse, error: unknown): void {
     return;
   }
   if (error instanceof LocalRequestError) return sendJson(response, 403, { error: "Only local workspace requests are allowed." });
+  if (error instanceof CorruptionError) return sendJson(response, 500, { error: "Unable to read the local profile data. Check or recover the stored artifacts." });
   if (error instanceof PreconditionError) return sendJson(response, 428, { error: "Read the current artifact before saving (If-Match required)." });
   if (error instanceof ConflictError) return sendJson(response, 409, { error: "Artifact changed or is busy. Reload and reconcile your draft before saving." });
   if (error instanceof InputError || error instanceof SyntaxError || isValidationError(error)) {
@@ -247,6 +250,11 @@ function isMissingJobError(error: unknown): boolean {
 class InputError extends Error {}
 class LocalRequestError extends Error {}
 class PreconditionError extends Error {}
+class CorruptionError extends Error {
+  constructor(cause: unknown) {
+    super("Stored profile data is corrupt", { cause });
+  }
+}
 
 function expectedVersion(request: IncomingMessage): string | null {
   const token = request.headers["if-match"];

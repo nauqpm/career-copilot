@@ -79,6 +79,32 @@ test("summary keeps source and history readable when the active pointer is corru
   } finally { await app.close(); }
 });
 
+test("invalid publish profile is a client error and leaves the active state unchanged", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m2-"));
+  const app = await serve(root);
+  try {
+    const first = await fetch(`${app.url}/api/profile/publish`, { method: "POST", headers: { "content-type": "application/json", "if-match": '"missing"' }, body: JSON.stringify({ profile, confirmed: true }) });
+    const tag = first.headers.get("etag")!;
+    const invalid = await fetch(`${app.url}/api/profile/publish`, { method: "POST", headers: { "content-type": "application/json", "if-match": tag }, body: JSON.stringify({ profile: { skills: "not-an-array" }, confirmed: true }) });
+    assert.equal(invalid.status, 400);
+    const current = await fetch(`${app.url}/api/profile`);
+    assert.equal(current.headers.get("etag"), tag);
+    assert.deepEqual(await current.json(), profile);
+    assert.equal((await (await fetch(`${app.url}/api/profile/history`)).json() as any).revisions.length, 1);
+  } finally { await app.close(); }
+});
+
+test("stored profile corruption is a server recovery error on read-only GET", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m2-"));
+  await mkdir(join(root, "data", "profile"), { recursive: true });
+  await writeFile(join(root, "data", "profile", "candidate-profile.json"), "{broken");
+  const app = await serve(root);
+  try {
+    const response = await fetch(`${app.url}/api/profile`);
+    assert.equal(response.status, 500);
+  } finally { await app.close(); }
+});
+
 test("CLI profile publish requires confirmation and accepts the current hash", async () => {
   const root = await mkdtemp(join(tmpdir(), "career-m2-"));
   const input = join(root, "profile.json");

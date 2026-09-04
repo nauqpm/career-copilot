@@ -112,3 +112,19 @@ test("propagates held evidence lock and does not replace an active pointer", asy
   assert.equal((await readProfileSnapshot(root)).revision?.id, first.revision.id);
 });
 
+test("hashes and returns an explicit role-track override", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+  const result = await publishProfileRevision(root, node, null, { confirmed: true, roleTracks: ["Platform engineering"] });
+  assert.deepEqual(result.profile.roleTracks, ["Platform engineering"]);
+  assert.deepEqual(result.revision.profile.roleTracks, ["Platform engineering"]);
+  assert.equal((await readProfileSnapshot(root)).revision?.profile.roleTracks?.[0], "Platform engineering");
+});
+
+test("maps verified source evidence to supported without marking it unresolved", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+  const result = await publishProfileRevision(root, node, null, { confirmed: true, evidence: [{ createdBy: { kind: "candidate" }, claim: "TypeScript source", claimType: "technical-capability", source: { kind: "source-document", artifactId: "cv", locator: "skills[0]" }, quote: "TypeScript", verification: "document-excerpt" }] });
+  assert.equal(result.unresolvedCount, 0);
+  assert.equal(result.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")?.status, "supported");
+  assert.equal((await readProfileHistory(root)).revisions[0].unresolvedCount, 0);
+});
+

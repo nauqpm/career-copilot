@@ -66,7 +66,16 @@ export async function publishProfileRevision(root: string, profile: CandidatePro
   const evidenceItems: EvidenceItem[] = claims.map((claimPath) => {
     const draft = byPath.get(claimPath);
     const value = getAtPath(validated, claimPath);
-    const base = draft ? { ...draft, source: { ...draft.source, locator: claimPath }, quote: draft.quote.trim() } : { createdBy: { kind: "candidate" as const }, claim: value, claimType: inferClaimType(claimPath), source: { kind: "profile-source" as const, artifactId: "candidate-profile", locator: claimPath }, quote: value, verification: "candidate-confirmed" as const };
+    const base = draft
+      ? normalizeDraftEvidence(draft, claimPath, value)
+      : {
+          createdBy: { kind: "candidate" as const },
+          claim: value,
+          claimType: inferClaimType(claimPath),
+          source: { kind: "profile-source" as const, artifactId: "candidate-profile", locator: claimPath },
+          quote: value,
+          verification: "candidate-confirmed" as const,
+        };
     return makeEvidence(base, now);
   });
   for (const item of evidenceItems) await writeArtifact(evidencePath(root, item.id), `${JSON.stringify(item, null, 2)}\n`, null);
@@ -93,6 +102,14 @@ export async function saveProfileSource(root: string, source: string, expectedHa
 function makeEvidence(draft: EvidenceDraft, now: string): EvidenceItem {
   const base = { schemaVersion: 1 as const, id: draft.id?.trim() || randomUUID(), createdAt: draft.createdAt?.trim() || now, createdBy: draft.createdBy, contentHash: "", claim: draft.claim, claimType: draft.claimType, source: draft.source, quote: draft.quote, verification: draft.verification, ...(draft.limitations ? { limitations: draft.limitations } : {}), ...(draft.language ? { language: draft.language } : {}) };
   return parseEvidenceItem({ ...base, contentHash: envelopeHash(base) });
+}
+function normalizeDraftEvidence(draft: EvidenceDraft, claimPath: string, value: string): EvidenceDraft {
+  return {
+    ...draft,
+    source: { ...draft.source, locator: claimPath },
+    claim: draft.verification === "candidate-confirmed" ? value : draft.claim,
+    quote: draft.verification === "candidate-confirmed" ? value : draft.quote.trim(),
+  };
 }
 function envelopeHash(value: Record<string, unknown>): string { const { contentHash: _ignored, ...rest } = value; return contentHash(JSON.stringify(rest)); }
 function getAtPath(value: unknown, path: string): string { const match = path.match(/^(.*?)((?:\[\d+\])*)$/); if (!match) throw new Error("Invalid profile claim path"); let current: any = value; for (const segment of path.split(/\.|\[|\]/).filter(Boolean)) current = current?.[segment]; if (typeof current !== "string" || !current.trim()) throw new Error(`Profile claim is empty: ${path}`); return current.trim(); }

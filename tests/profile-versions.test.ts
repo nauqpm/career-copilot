@@ -42,6 +42,26 @@ test("keeps unverified draft evidence unresolved and preserves old revisions", a
   assert.equal(history.revisions.find((entry) => entry.id === second.revision.id)?.active, true);
 });
 
+test("candidate-confirmed draft evidence is forced to the exact profile leaf value", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+  const result = await publishProfileRevision(root, node, null, {
+    confirmed: true,
+    evidence: [{
+      createdBy: { kind: "candidate" },
+      claim: "invented claim",
+      claimType: "technical-capability",
+      source: { kind: "manual-note", artifactId: "note-1", locator: "skills[0]" },
+      quote: "invented quote",
+      verification: "candidate-confirmed",
+    }],
+  });
+  const artifact = await readArtifact(join(root, "data", "profile", "evidence", `${result.revision.claimEvidence[2]!.evidenceIds[0]}.json`));
+  const evidence = JSON.parse(artifact!.content) as { claim: string; quote: string; verification: string };
+  assert.equal(evidence.verification, "candidate-confirmed");
+  assert.equal(evidence.claim, "TypeScript");
+  assert.equal(evidence.quote, "TypeScript");
+});
+
 test("rejects stale publication without changing active pointer", async () => {
   const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
   const first = await publishProfileRevision(root, node, null, { confirmed: true });

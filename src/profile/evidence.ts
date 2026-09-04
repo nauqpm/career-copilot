@@ -43,7 +43,7 @@ export function parseEvidenceItem(value: unknown): EvidenceItem {
 
 export function parseEvidenceDraft(value: unknown): EvidenceDraft {
   if (!record(value)) throw new Error("Evidence draft must be a JSON object");
-  const normalized = { ...value, claim: typeof value.claim === "string" ? value.claim.trim() : value.claim, quote: typeof value.quote === "string" ? value.quote.trim() : value.quote,
+  const normalized: Record<string, any> = { ...value, claim: typeof value.claim === "string" ? value.claim.trim() : value.claim, quote: typeof value.quote === "string" ? value.quote.trim() : value.quote,
     language: typeof value.language === "string" ? value.language.trim() : value.language,
     limitations: Array.isArray(value.limitations) ? value.limitations.map((item) => typeof item === "string" ? item.trim() : item) : value.limitations,
     source: record(value.source) ? { ...value.source, artifactId: typeof value.source.artifactId === "string" ? value.source.artifactId.trim() : value.source.artifactId, locator: typeof value.source.locator === "string" ? value.source.locator.trim() : value.source.locator } : value.source,

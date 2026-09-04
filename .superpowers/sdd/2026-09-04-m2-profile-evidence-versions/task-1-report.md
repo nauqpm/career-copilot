@@ -35,6 +35,19 @@ Exact command:
 & 'C:/Users/quanp/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe' --import tsx --test tests/profile-evidence.test.ts tests/profile.test.ts
 ```
 
+## Task 2 integration typing fix
+
+The draft normalization intermediate is explicitly typed as `Record<string, any>` so optional envelope fields are available to the existing parser without changing the runtime contract.
+
+Typecheck command and output:
+
+```text
+node node_modules/typescript/bin/tsc --noEmit
+tsc exit=0
+```
+
+Focused regression command output: 11 tests passed, 0 failed (same exact bundled Node command above).
+
 Full output:
 
 ```text

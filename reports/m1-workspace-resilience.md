@@ -17,7 +17,7 @@
 
 - TDD: four new CLI/corruption/HTTP tests failed on the original implementation; browser regressions also failed before fixes. Shared writer/privacy cases were exercised independently before integration.
 - Full suite: **130/130 passed**, zero skipped, on Node 24.19.0 using the installed `tsx` loader.
-- Core coverage: **94.14% lines, 83.33% branches, 94.58% functions**. Shared artifact and privacy modules measured 100% line coverage in this combined run.
+- Core coverage: **93.79% lines, 83.17% branches, 94.58% functions** in the final post-push run. Privacy measured 100% line coverage; artifact coverage is 99.07% because the portable missing-ancestor branch is environment-dependent.
 - TypeScript build (`tsc`): passed.
 - Real Chrome headless against a synthetic workspace: JD creation; note save/reload; two tabs with one stale save returning 409 and preserving entered text; profile save; raw/profile corruption diagnostics; healthy workflow remains available. All requests outside the loopback test server were blocked; none were attempted by the page.
 - Executed the PowerShell runbook's copy/hash/new-root restore against synthetic data: matching relative paths and SHA-256 hashes. The automated backup fixture also reopened profile and job through existing parsers.

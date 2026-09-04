@@ -53,7 +53,8 @@ export async function publishProfileRevision(root: string, profile: CandidatePro
   const validated = parseCandidateProfile(profile);
   const snapshot = await readProfileSnapshot(root);
   if (snapshot.hash !== expectedHash) throw new ConflictError();
-  const claims = profileClaimPaths(validated);
+  const effectiveProfile = parseCandidateProfile({ ...validated, ...(options.roleTracks ? { roleTracks: options.roleTracks } : {}) });
+  const claims = profileClaimPaths(effectiveProfile);
   const drafts = (options.evidence ?? []).map((draft) => parseEvidenceDraft(draft));
   const byPath = new Map<string, EvidenceDraft>();
   for (const draft of drafts) {
@@ -65,7 +66,7 @@ export async function publishProfileRevision(root: string, profile: CandidatePro
   const now = new Date().toISOString();
   const evidenceItems: EvidenceItem[] = claims.map((claimPath) => {
     const draft = byPath.get(claimPath);
-    const value = getAtPath(validated, claimPath);
+    const value = getAtPath(effectiveProfile, claimPath);
     const base = draft
       ? normalizeDraftEvidence(draft, claimPath, value)
       : {
@@ -80,7 +81,7 @@ export async function publishProfileRevision(root: string, profile: CandidatePro
   });
   for (const item of evidenceItems) await writeArtifact(evidencePath(root, item.id), `${JSON.stringify(item, null, 2)}\n`, null);
   const revisionBase = { schemaVersion: 1 as const, id: randomUUID(), createdAt: now, createdBy: { kind: "candidate" as const }, contentHash: "", ...(snapshot.revision ? { supersedes: snapshot.revision.id } : {}), profile: validated, claimEvidence: evidenceItems.map((item, index) => ({ claimPath: claims[index], evidenceIds: [item.id], status: item.verification === "candidate-confirmed" ? "user-asserted" as const : "needs-confirmation" as const })), ...(options.roleTracks ?? validated.roleTracks ? { roleTracks: options.roleTracks ?? validated.roleTracks } : {}) };
-  const revision = { ...revisionBase, contentHash: envelopeHash(revisionBase) } as ProfileRevision;
+  const revision = parseProfileRevision({ ...revisionBase, profile: effectiveProfile, contentHash: envelopeHash(revisionBase) });
   const revisionHash = await writeArtifact(revisionPath(root, revision.id), `${JSON.stringify(revision, null, 2)}\n`, null);
   const pointerArtifact = await readArtifact(currentPath(root));
   if (!snapshot.revision && ((await readArtifact(candidateProfilePath(root)))?.hash ?? null) !== expectedHash) throw new ConflictError();
@@ -100,6 +101,7 @@ export async function saveProfileSource(root: string, source: string, expectedHa
 }
 
 function makeEvidence(draft: EvidenceDraft, now: string): EvidenceItem {
+  if (draft.id !== undefined && !isSafeId(draft.id)) throw new Error("Evidence id is invalid");
   const base = { schemaVersion: 1 as const, id: draft.id?.trim() || randomUUID(), createdAt: draft.createdAt?.trim() || now, createdBy: draft.createdBy, contentHash: "", claim: draft.claim, claimType: draft.claimType, source: draft.source, quote: draft.quote, verification: draft.verification, ...(draft.limitations ? { limitations: draft.limitations } : {}), ...(draft.language ? { language: draft.language } : {}) };
   return parseEvidenceItem({ ...base, contentHash: envelopeHash(base) });
 }
@@ -114,8 +116,9 @@ function normalizeDraftEvidence(draft: EvidenceDraft, claimPath: string, value: 
 function envelopeHash(value: Record<string, unknown>): string { const { contentHash: _ignored, ...rest } = value; return contentHash(JSON.stringify(rest)); }
 function getAtPath(value: unknown, path: string): string { const match = path.match(/^(.*?)((?:\[\d+\])*)$/); if (!match) throw new Error("Invalid profile claim path"); let current: any = value; for (const segment of path.split(/\.|\[|\]/).filter(Boolean)) current = current?.[segment]; if (typeof current !== "string" || !current.trim()) throw new Error(`Profile claim is empty: ${path}`); return current.trim(); }
 function inferClaimType(path: string): EvidenceItem["claimType"] { if (path.includes("experience")) return "experience"; if (path.includes("skills")) return "technical-capability"; if (path.includes("education")) return "education"; if (path.includes("languages")) return "language"; if (path.includes("certifications")) return "certification"; if (path.includes("preferences")) return "preference"; return "other"; }
-function parsePointer(value: unknown): ProfileCurrentPointer { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Profile current pointer is invalid"); const pointer = value as Record<string, unknown>; if (pointer.schemaVersion !== 1 || typeof pointer.revisionId !== "string" || !pointer.revisionId.trim() || typeof pointer.revisionHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(pointer.revisionHash)) throw new Error("Profile current pointer is invalid"); return { schemaVersion: 1, revisionId: pointer.revisionId.trim(), revisionHash: pointer.revisionHash };
+function parsePointer(value: unknown): ProfileCurrentPointer { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Profile current pointer is invalid"); const pointer = value as Record<string, unknown>; if (pointer.schemaVersion !== 1 || typeof pointer.revisionId !== "string" || !isSafeId(pointer.revisionId) || typeof pointer.revisionHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(pointer.revisionHash)) throw new Error("Profile current pointer is invalid"); return { schemaVersion: 1, revisionId: pointer.revisionId.trim(), revisionHash: pointer.revisionHash };
 }
+function isSafeId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.trim()) && !value.includes("..") ; }
 function candidateProfilePath(root: string): string { return join(profileDirectory(root), "candidate-profile.json"); }
 function profileSourcePath(root: string): string { return join(profileDirectory(root), "source.md"); }
 function currentPath(root: string): string { return join(profileDirectory(root), "current.json"); }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -76,5 +76,39 @@ test("history ignores malformed orphan revisions", async () => {
   await writeArtifact(join(root, "data", "profile", "revisions", "bad.json"), "{broken", null);
   const history = await readProfileHistory(root);
   assert.deepEqual(history.revisions, []);
+});
+
+test("rejects traversal evidence ids before writing outside evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+  await assert.rejects(publishProfileRevision(root, node, null, { confirmed: true, evidence: [{ id: "..\\current", createdBy: { kind: "candidate" }, claim: "x", claimType: "other", source: { kind: "manual-note", artifactId: "n", locator: "skills[0]" }, quote: "TypeScript", verification: "unverified" }] }), /Evidence id is invalid/);
+  assert.equal(await readArtifact(join(root, "data", "profile", "current.json")), undefined);
+});
+
+test("fails closed for malformed current pointers and preserves the prior pointer on lock conflict", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+  await writeArtifact(join(root, "data", "profile", "current.json"), JSON.stringify({ schemaVersion: 1, revisionId: "..\\candidate-profile", revisionHash: "sha256:" + "0".repeat(64) }) + "\n", null);
+  await assert.rejects(readProfileSnapshot(root), /current pointer is invalid/);
+
+  await unlink(join(root, "data", "profile", "current.json"));
+  const first = await publishProfileRevision(root, node, null, { confirmed: true });
+  const pointerPath = join(root, "data", "profile", "current.json");
+  const pointerBefore = await readFile(pointerPath, "utf8");
+  await writeFile(`${pointerPath}.lock`, "held", "utf8");
+  try { await assert.rejects(publishProfileRevision(root, { ...node, skills: ["Go"] }, first.revisionHash, { confirmed: true }), ConflictError); }
+  finally { await unlink(`${pointerPath}.lock`); }
+  assert.equal(await readFile(pointerPath, "utf8"), pointerBefore);
+  assert.equal((await readProfileSnapshot(root)).revision?.id, first.revision.id);
+});
+
+test("propagates held evidence lock and does not replace an active pointer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+  const first = await publishProfileRevision(root, node, null, { confirmed: true });
+  const evidenceId = "11111111-1111-4111-8111-111111111111";
+  const evidencePath = join(root, "data", "profile", "evidence", `${evidenceId}.json`);
+  await writeFile(`${evidencePath}.lock`, "held", "utf8");
+  try {
+    await assert.rejects(publishProfileRevision(root, { ...node, skills: ["Go"] }, first.revisionHash, { confirmed: true, evidence: [{ id: evidenceId, createdBy: { kind: "candidate" }, claim: "Go", claimType: "technical-capability", source: { kind: "manual-note", artifactId: "n", locator: "skills[0]" }, quote: "Go", verification: "unverified" }] }), ConflictError);
+  } finally { await unlink(`${evidencePath}.lock`); }
+  assert.equal((await readProfileSnapshot(root)).revision?.id, first.revision.id);
 });
 

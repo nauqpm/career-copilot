@@ -33,7 +33,18 @@ For recovery, make a local copy of the workspace, validate the intended revision
 
 ## Verification
 
-The M2 implementation was checked with the focused profile schema/evidence/version tests, server and CLI M2 tests, browser profile confirmation/history tests, the existing full test suite, TypeScript build, and diff/link inspection. The final command output and any limitations belong in the task ledger and the final implementation review.
+The M2 implementation was checked with the focused profile schema/evidence/version tests, server and CLI M2 tests, browser profile confirmation/history tests, the existing full test suite, TypeScript build, dependency audit, and diff/link inspection.
+
+| Check | Result |
+| --- | --- |
+| `pnpm test` through the bundled Node/PNPM runtime | 156 passed, 0 failed, 0 skipped |
+| Combined M1 + M2 test run (`node --import tsx --test ...`) | 156 passed, 0 failed, 0 skipped |
+| Full source coverage (`node --import tsx --test --experimental-test-coverage ...`) | 93.62% lines · 83.30% branches · 92.67% functions |
+| TypeScript build (`node node_modules/typescript/bin/tsc`) | passed |
+| Dependency audit (`pnpm audit --audit-level=high`) | no known vulnerabilities |
+| `git diff --check` and changed-document relative-link check | passed |
+
+The local browser smoke flow used two temporary synthetic tabs and a disposable workspace: the unchecked publish stayed local and did not submit; a confirmed publish created a revision with seven evidence items and showed history; a second tab loaded the old ETag, received the stale-conflict message after the first tab published, and retained its draft. The temporary workspace and tabs were closed after verification. No private career records or external destinations were used.
 
 ## Deferred boundaries
 

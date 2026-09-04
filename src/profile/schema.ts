@@ -47,6 +47,7 @@ export type CandidateProfile = {
   languages: CandidateLanguage[];
   certifications?: string[];
   preferences?: CandidatePreferences;
+  roleTracks?: string[];
 };
 
 const employmentTypes = new Set<EmploymentType>(["full-time", "part-time", "contract", "internship", "temporary"]);
@@ -64,6 +65,7 @@ export function parseCandidateProfile(value: unknown): CandidateProfile {
     languages: parseLanguages(value.languages),
     ...optionalTextList(value.certifications, "certifications"),
     ...optionalPreferences(value.preferences),
+    ...optionalTextList(value.roleTracks, "roleTracks"),
   };
 }
 

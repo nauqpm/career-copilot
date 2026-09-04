@@ -1,6 +1,14 @@
 # Career Copilot
 
-Local-first, agent-assisted career workspace. Job Descriptions and candidate profile data stay in local files; the CLI validates structure and Codex skills perform requested semantic extraction.
+Local-first, agent-assisted career workspace for one person, initially focused on IT and adjacent roles in Vietnam/HCMC. Workspace artifacts stay in local files; the CLI validates structure and skills perform requested semantic extraction. If you invoke an external agent, its selected inputs may leave your machine under that runtime's configuration; local files alone do not provide an offline AI guarantee.
+
+## Product direction and current capabilities
+
+The [M0 baseline and delivery inventory](docs/specs/local-it-career-workstation/27-m0-baseline-and-delivery-inventory.md) records the accepted direction, reusable source, remaining work, historical statements and first-release scope. The [specification index](docs/specs/local-it-career-workstation/README.md) distinguishes that direction from proposed feature contracts.
+
+The commands and screens below describe the current implementation: JD preparation, profile editing, explicit skill-based decisions/CV drafts, and a loopback dashboard. Immutable evidence revisions, approval/submission flows and application outcomes remain planned. M0 does not implement them. Older slice plans describe prior work and must not be replayed as new tasks.
+
+M1 adds create-only CLI output, hash-checked profile/note/source saves, corruption warnings, safe artifact writes and local recovery guidance. It does not migrate existing data or add evidence revisions. See [M1 backup and recovery](docs/specs/local-it-career-workstation/28-m1-backup-and-recovery.md).
 
 ## Install
 
@@ -16,12 +24,15 @@ Place private JDs in `fixtures/real-jobs/`; this directory is intentionally igno
 ```bash
 pnpm dev job analyze ./fixtures/real-jobs/backend.txt --out ./data/raw/backend.json
 pnpm dev job analyze ./fixtures/real-jobs --out ./data/raw
-pnpm dev job analyze https://example.com/job --out ./data/raw/job.json
 ```
+
+The existing CLI also accepts an explicitly supplied URL (`pnpm dev job analyze <url> --out <path>`). This is a legacy generic fetch capability, not a reviewed portal connector or the first-release intake path. The new direction starts with paste/local files; expanding portal access requires its own review.
 
 Use `--text` for an explicit inline JD or `--stdin` as a fallback.
 
 For a directory input, the CLI writes one normalized JSON file per JD and prints a success/failure summary to stderr.
+
+`--out` refuses an existing file by default. Batch mode keeps existing outputs and exits with status 1 if any input/output fails. For an intentional single-file replacement, read the current file and pass `--expected-hash sha256:<64 lowercase hex digits>`; a stale hash refuses the write. This also applies when validating an analysis/profile/decision into an existing path. On PowerShell, inspect the hash with `(Get-FileHash -LiteralPath '<output-file>' -Algorithm SHA256).Hash.ToLowerInvariant()`. Git privacy warnings are advisory and never modify ignore rules.
 
 ## Produce `JobAnalysis`
 
@@ -65,6 +76,10 @@ Start the browser app:
 ```bash
 pnpm web
 ```
+
+To store data in a separate local workspace, set `$env:CAREER_WORKSPACE_ROOT = 'C:\CareerWorkspace'` in PowerShell before starting the server from this application checkout. UI assets still come from the checkout. Choose a normal local directory, not a symlink/junction or network/device path. Remove the variable after stopping the server to return to the default root.
+
+When another tab/CLI has changed a profile, note or source file, saving shows a conflict and retains the draft. Copy the draft to a private place, reload the page and reconcile it with the current file before saving again. The internal refresh button deliberately keeps a draft's old version token. A corrupt profile/raw JD stays on disk and shows a warning without hiding healthy jobs.
 
 Open [http://127.0.0.1:4242](http://127.0.0.1:4242). The app runs only on your computer. Paste a JD and optionally label its source; the app creates a separate ignored folder at `data/jobs/<job-id>/` with `source.md` and `raw.json`.
 

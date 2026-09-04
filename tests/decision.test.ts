@@ -7,6 +7,21 @@ import test from "node:test";
 import { runCli } from "../src/cli.js";
 import { parseJobDecision } from "../src/decision/schema.js";
 import { saveCvDraft, saveJobDecision } from "../src/decision/storage.js";
+import { ConflictError, readArtifact } from "../src/workspace/artifacts.js";
+
+test("decisions and drafts require the observed revision before replacement", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-decision-"));
+  await saveJobDecision(root, validDecision());
+  const decision = await readArtifact(join(root, "decision.json"));
+  await assert.rejects(saveJobDecision(root, validDecision()), ConflictError);
+  await saveJobDecision(root, validDecision({ summary: "Updated" }), decision!.hash);
+  await assert.rejects(saveJobDecision(root, validDecision(), decision!.hash), ConflictError);
+  await saveCvDraft(root, "original");
+  const draft = await readArtifact(join(root, "cv-draft.md"));
+  await assert.rejects(saveCvDraft(root, "changed"), ConflictError);
+  await saveCvDraft(root, "updated", draft!.hash);
+  assert.equal(await readFile(join(root, "cv-draft.md"), "utf8"), "updated\n");
+});
 
 test("parses a considered job with evidence and a CV recommendation", () => {
   const decision = parseJobDecision(validDecision());

@@ -1,5 +1,7 @@
 # Slice 4 — Local Workspace UI
 
+> **Historical reference — M0, 2026-09-04:** This document records prior implementation/design work. Its scope exclusions, task checkboxes and verification results are historical; do not replay it as a new plan or treat old test results as current. See the [active M0 baseline](../docs/specs/local-it-career-workstation/27-m0-baseline-and-delivery-inventory.md) for current direction, reuse inventory and remaining work.
+
 ## Status
 
 Implemented locally on `slice-4-local-workspace`, branched from Slice 3. The branch remains local only; no private career records or Slice branches were pushed.

@@ -243,7 +243,9 @@ test("accepts local authorities and matching HTTP origins on the listening port"
         { method: "POST", path: "/api/profile/source", body: { content: "Local CV source" }, status: 204 },
       ];
       for (const mutation of mutations) {
-        const response = await requestWithHeaders(app.url, mutation.path, headers, mutation.method, mutation.body);
+        const snapshot = await fetch(`${app.url}${mutation.path === "/api/profile/source" ? "/api/summary" : mutation.path}`);
+        const token = mutation.path === "/api/profile/source" ? `"${((await snapshot.json()) as {profileSourceHash: string | null}).profileSourceHash ?? "missing"}"` : snapshot.headers.get("etag")!;
+        const response = await requestWithHeaders(app.url, mutation.path, { ...headers, "if-match": token }, mutation.method, mutation.body);
         assert.equal(response.status, mutation.status, mutation.path);
       }
       assert.equal(await readWorkspaceJobNote(root, job.id), "Local note");
@@ -411,10 +413,11 @@ function postJson(url: string, path: string, body: unknown) {
   });
 }
 
-function putJson(url: string, path: string, body: unknown) {
+async function putJson(url: string, path: string, body: unknown) {
+  const current = await fetch(`${url}${path}`);
   return fetch(`${url}${path}`, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "if-match": current.headers.get("etag") ?? '"missing"' },
     body: JSON.stringify(body),
   });
 }

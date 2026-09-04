@@ -9,6 +9,10 @@ export function initializeBrowserApp(browser = globalThis) {
   let loadVersion = 0;
   let pendingNotice;
   let profileDrafts = {};
+  let profileBases = {};
+  let noteBases = {};
+  let noteHashes = {};
+  let sourceBase;
   let profileSaving = false;
   let profileVersion = 0;
   let noteDrafts = {};
@@ -29,17 +33,19 @@ export function initializeBrowserApp(browser = globalThis) {
     const loadedProfileVersion = profileVersion;
     const route = parseRoute(window.location.hash);
     const loadedNoteVersion = noteVersions[route.jobId];
+    let loadedNoteHash;
     refreshing = true;
     try {
       const [loadedSummary, detail, note] = await Promise.all([
         route.page === "new-job" ? state.summary : requestJson("/api/summary"),
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}`) : undefined,
-        route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`) : undefined,
+        route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`, {}, (hash) => { loadedNoteHash = hash; }) : undefined,
       ]);
       const hydratedSummary = await hydrateCvRecommendations(loadedSummary, route);
       if (version !== loadVersion) return;
       if (automatic && document.activeElement?.closest("a, button, input, textarea, select, summary")) return;
-      const summary = loadedProfileVersion === profileVersion ? hydratedSummary : { ...hydratedSummary, profile: state.profile };
+      const summary = loadedProfileVersion === profileVersion ? hydratedSummary : { ...hydratedSummary, profile: state.profile, profileHash: state.summary.profileHash };
+      if (loadedNoteVersion === noteVersions[route.jobId]) noteHashes = { ...noteHashes, [route.jobId]: loadedNoteHash };
       const content = loadedNoteVersion === noteVersions[route.jobId] ? note?.content ?? "" : state.note;
       const changed = JSON.stringify([state.summary, state.detail, state.note]) !== JSON.stringify([summary, detail, content]);
       state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, note: content, error: automatic ? state.error : "", loading: false };
@@ -73,14 +79,17 @@ export function initializeBrowserApp(browser = globalThis) {
     const button = event.target.closest("button");
     if (button?.dataset?.editProfile && !profileSaving) {
       if (!state.profileReady) return showNotice("Hồ sơ chưa tải xong. Hãy tải lại dữ liệu trước khi chỉnh sửa.", true);
+      if (state.summary.profileError) return showNotice("Hồ sơ đang lỗi. Hãy khôi phục dữ liệu và tải lại trước khi chỉnh sửa.", true);
       rememberProfileDraft();
       const section = button.dataset.editProfile;
+      if (!Object.hasOwn(profileBases, section)) profileBases = { ...profileBases, [section]: { profile: state.profile, hash: summaryToken(state.summary.profileHash) } };
       state = { ...state, profileEditor: { section, draft: profileDrafts[section] ?? profileToSectionDraft(state.profile, section) }, error: "", notice: "" };
       render();
       document.querySelector("#profile-form textarea")?.focus();
     }
     if (button?.dataset?.cancelProfile && !profileSaving) {
       profileDrafts = Object.fromEntries(Object.entries(profileDrafts).filter(([section]) => section !== button.dataset.cancelProfile));
+      profileBases = Object.fromEntries(Object.entries(profileBases).filter(([section]) => section !== button.dataset.cancelProfile));
       state = { ...state, profileEditor: undefined, error: "", notice: "" };
       render();
       document.querySelector("#page-heading")?.focus();
@@ -98,6 +107,9 @@ export function initializeBrowserApp(browser = globalThis) {
     const form = event.target.closest("form");
     rememberDraft(form);
   });
+  app.addEventListener("change", (event) => {
+    if (event.target.id === "profile-source" && sourceBase === undefined) sourceBase = summaryToken(state.summary.profileSourceHash);
+  });
 
   app.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !window.matchMedia?.("(max-width: 760px)").matches || !state.menuOpen) return;
@@ -111,7 +123,10 @@ export function initializeBrowserApp(browser = globalThis) {
   function rememberDraft(form) {
     if (form?.id === "profile-form") return rememberProfileDraft(form);
     if (form?.id === "job-form") state = { ...state, jobDraft: Object.fromEntries(new FormData(form).entries()) };
-    if (form?.id === "note-form" && state.route.page === "job") noteDrafts = { ...noteDrafts, [state.route.jobId]: new FormData(form).get("content") };
+    if (form?.id === "note-form" && state.route.page === "job") {
+      if (!Object.hasOwn(noteBases, state.route.jobId)) noteBases = { ...noteBases, [state.route.jobId]: noteHashes[state.route.jobId] };
+      noteDrafts = { ...noteDrafts, [state.route.jobId]: new FormData(form).get("content") };
+    }
   }
 
   function rememberProfileDraft(form = document.querySelector("#profile-form")) {
@@ -156,24 +171,33 @@ export function initializeBrowserApp(browser = globalThis) {
       } else if (form.id === "note-form" && route.page === "job") {
         const content = values.get("content");
         if (!String(content ?? "").trim()) throw new Error("Hãy nhập ghi chú không rỗng trước khi lưu.");
-        const saved = await requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`, { method: "PUT", body: JSON.stringify({ content: values.get("content") }) });
+        const saved = await requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`, { method: "PUT", headers: matchHeader(noteBases[route.jobId]), body: JSON.stringify({ content: values.get("content") }) }, (hash) => {
+          noteHashes = { ...noteHashes, [route.jobId]: hash };
+          noteBases = { ...noteBases, [route.jobId]: hash };
+        });
         noteVersions = { ...noteVersions, [route.jobId]: (noteVersions[route.jobId] ?? 0) + 1 };
-        if (noteDrafts[route.jobId] === content) noteDrafts = Object.fromEntries(Object.entries(noteDrafts).filter(([id]) => id !== route.jobId));
+        if (noteDrafts[route.jobId] === content) {
+          noteDrafts = Object.fromEntries(Object.entries(noteDrafts).filter(([id]) => id !== route.jobId));
+          noteBases = Object.fromEntries(Object.entries(noteBases).filter(([id]) => id !== route.jobId));
+        }
         if (state.route.page === "job" && state.route.jobId === route.jobId) {
           state = { ...state, note: saved.content };
           showNotice("Đã lưu ghi chú trên máy.");
         }
       } else if (form.id === "profile-form") {
+        if (state.summary.profileError) throw new Error("Hồ sơ đang lỗi. Hãy khôi phục dữ liệu và tải lại trước khi chỉnh sửa.");
         rememberProfileDraft(form);
         const { section, draft } = state.profileEditor;
-        const profile = mergeProfileSection(state.profile, section, draft);
+        const profile = mergeProfileSection(profileBases[section]?.profile, section, draft);
         profileSaving = true;
         state = { ...state, profileEditor: { ...state.profileEditor, saving: true } };
         form.querySelector("fieldset").disabled = true;
-        const saved = await requestJson("/api/profile", { method: "PUT", body: JSON.stringify(profile) });
+        let savedHash;
+        const saved = await requestJson("/api/profile", { method: "PUT", headers: matchHeader(profileBases[section]?.hash), body: JSON.stringify(profile) }, (hash) => { savedHash = hash; });
         profileVersion += 1;
         profileDrafts = Object.fromEntries(Object.entries(profileDrafts).filter(([key]) => key !== section));
-        state = { ...state, profile: saved, summary: { ...state.summary, profile: saved }, profileEditor: undefined };
+        profileBases = Object.fromEntries(Object.entries(profileBases).filter(([key]) => key !== section));
+        state = { ...state, profile: saved, summary: { ...state.summary, profile: saved, profileHash: rawToken(savedHash) }, profileEditor: undefined };
         if (state.route.page === "profile") {
           state = { ...state, error: "", notice: "Đã lưu mục hồ sơ trên máy. Các nhóm khác được giữ nguyên." };
           render();
@@ -184,11 +208,17 @@ export function initializeBrowserApp(browser = globalThis) {
         if (!(file instanceof File) || !file.name) throw new Error("Hãy chọn tệp .txt hoặc .md trước khi lưu.");
         if (!/\.(txt|md)$/i.test(file.name)) throw new Error("Chỉ hỗ trợ tệp nguồn .txt hoặc .md.");
         if (file.size > 1024 * 1024) throw new Error("Tệp nguồn vượt quá 1 MiB. Hãy chọn tệp nhỏ hơn.");
-        await requestJson("/api/profile/source", { method: "POST", body: JSON.stringify({ content: await file.text() }) });
+        const sourceToken = sourceBase ?? summaryToken(state.summary.profileSourceHash);
+        await requestJson("/api/profile/source", { method: "POST", headers: matchHeader(sourceToken), body: JSON.stringify({ content: await file.text() }) }, (hash) => {
+          sourceBase = hash;
+          state = { ...state, summary: { ...state.summary, profileSourceHash: rawToken(hash) } };
+        });
         if (form.isConnected) showNotice("Đã lưu tệp nguồn hồ sơ trên máy.");
       }
     } catch (error) {
-      if (form.isConnected || (form.id === "profile-form" && state.route.page === "profile")) showNotice(`${error.message}${form.id === "profile-form" ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
+      const sameNote = form.id === "note-form" && state.route.page === "job" && state.route.jobId === route.jobId;
+      const sameProfile = ["profile-form", "profile-source-form"].includes(form.id) && state.route.page === "profile";
+      if (form.isConnected || sameNote || sameProfile) showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
     } finally {
       if (form.id === "profile-form") {
         profileSaving = false;
@@ -210,15 +240,25 @@ export function initializeBrowserApp(browser = globalThis) {
     notice.setAttribute("role", isError ? "alert" : "status");
   }
 
-  async function requestJson(path, options = {}) {
+  function summaryToken(hash) { return hash === null ? '"missing"' : typeof hash === "string" ? `"${hash}"` : undefined; }
+  function rawToken(hash) { return hash === '"missing"' ? null : hash?.slice(1, -1); }
+  function matchHeader(hash) {
+    if (!hash) throw new Error("Chưa có phiên bản dữ liệu. Hãy tải lại và mở lại biểu mẫu trước khi lưu.");
+    return { "If-Match": hash };
+  }
+
+  async function requestJson(path, options = {}, onVersion) {
     let response;
     try {
       response = await fetch(path, { ...options, headers: { "content-type": "application/json", ...(options.headers ?? {}) } });
     } catch {
       throw new Error("Không kết nối được ứng dụng cục bộ. Hãy kiểm tra máy chủ và thử tải lại.");
     }
-    if (response.status === 204) return undefined;
+    if (response.status === 409) throw new Error("Dữ liệu đã thay đổi ở nơi khác. Nội dung đang nhập được giữ nguyên. Hãy sao chép bản nháp, tải lại và mở lại biểu mẫu để đối chiếu trước khi lưu.");
+    if (response.status === 428) throw new Error("Thiếu phiên bản dữ liệu. Hãy tải lại và mở lại biểu mẫu trước khi lưu.");
     if (!response.ok) throw new Error(response.status === 404 ? "Không tìm thấy dữ liệu cục bộ được yêu cầu." : response.status === 400 ? "Dữ liệu chưa hợp lệ. Kiểm tra nội dung rồi thử lưu lại." : "Không xử lý được yêu cầu cục bộ. Hãy thử lại.");
+    onVersion?.(response.headers?.get("ETag") ?? undefined);
+    if (response.status === 204) return undefined;
     return response.json();
   }
 

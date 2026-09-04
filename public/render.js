@@ -11,6 +11,9 @@ const artifactLabels = [["source", "Nguồn JD"], ["analysis", "Phân tích"], [
 
 export function renderApplication({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note, jobDraft, error, notice, menuOpen = true, loading = false } = {}) {
   return `${renderSidebar(route, menuOpen)}<main id="workspace" class="workspace-main" aria-busy="${loading}">
+    ${(summary.privacyWarnings ?? []).map((warning) => `<p class="warning" role="alert">${escapeHtml(warning)}</p>`).join("")}
+    ${summary.profileSourceError ? `<p class="warning" role="alert">${escapeHtml(summary.profileSourceError)}</p>` : ""}
+    ${summary.profileError ? `<p class="warning" role="alert">Hồ sơ cần được khôi phục trước khi chỉnh sửa: ${escapeHtml(summary.profileError)}</p>` : ""}
     <p id="notice" class="notice${error ? " error" : ""}" aria-atomic="true" role="${error ? "alert" : "status"}" aria-live="polite">${escapeHtml(error || notice || "")}${error && route.page === "profile" && profileEditor && !error.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}</p>
     ${loading && route.page === "job" ? pageHeader("Đang tải JD…", "Đọc nguồn và tài liệu trên máy của bạn.") : renderPage({ route, summary, detail, profile, profileEditor, note, jobDraft })}
   </main>`;
@@ -31,7 +34,7 @@ export function renderPage({ route = { page: "overview" }, summary = {}, detail,
   switch (route.page) {
     case "jobs": return renderJobs(summary);
     case "job": return renderJobDetail(detail, note);
-    case "profile": return renderProfile(profile, profileEditor);
+    case "profile": return summary.profileError && !profileEditor ? pageHeader("Hồ sơ cá nhân", "Hồ sơ đang lỗi. Hãy khôi phục dữ liệu rồi tải lại.") : renderProfile(profile, profileEditor);
     case "cvs": return renderCvLibrary(summary);
     case "new-job": return renderNewJob(jobDraft);
     default: return renderOverview(summary, profile);
@@ -120,7 +123,7 @@ function renderJobList(jobs) {
 }
 
 function renderJobRow(job) {
-  return `<article class="job-row"><div class="job-identity"><a href="${jobHref(job.id)}">${escapeHtml(job.title ?? job.company ?? "JD chưa có tiêu đề")}</a>${job.title && job.company ? `<p>${escapeHtml(job.company)}</p>` : ""}<p>${escapeHtml(jobMeta(job) || job.sourcePreview || "")}</p></div><div class="job-state">${renderStatus(job.decisionStatus, job.hasAnalysis)}${renderTime(job.updatedAt)}</div>${renderArtifacts(job)}${job.invalidDerivedData ? '<p class="warning">Có tài liệu cần được kiểm tra. Mở JD để xem chi tiết.</p>' : ""}</article>`;
+  return `<article class="job-row"><div class="job-identity"><a href="${jobHref(job.id)}">${escapeHtml(job.title ?? job.company ?? "JD chưa có tiêu đề")}</a>${job.title && job.company ? `<p>${escapeHtml(job.company)}</p>` : ""}<p>${escapeHtml(jobMeta(job) || job.sourcePreview || "")}</p></div><div class="job-state">${renderStatus(job.decisionStatus, job.hasAnalysis)}${renderTime(job.updatedAt)}</div>${renderArtifacts(job)}${job.invalidSourceData ? `<p class="warning">Nguồn JD cần được khôi phục: ${escapeHtml(job.invalidSourceData)}</p>` : ""}${job.invalidDerivedData ? '<p class="warning">Có tài liệu cần được kiểm tra. Mở JD để xem chi tiết.</p>' : ""}</article>`;
 }
 
 function jobMeta(job) {

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename, extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { type JobBatchResolution, resolveJobInput, resolveJobInputsInDirectory } from "./job/resolve-input.js";
 import { parseJobAnalysis } from "./job/schema.js";
 import { parseCandidateProfile } from "./profile/schema.js";
 import { parseJobDecision } from "./decision/schema.js";
+import { writeArtifact } from "./workspace/artifacts.js";
+import { artifactPrivacyWarnings } from "./workspace/privacy.js";
 
 export type CliIo = {
   writeStdout: (chunk: string) => void;
@@ -33,6 +35,7 @@ const usage = [
   "  career job validate-analysis <analysis.json> [--out path]",
   "  career profile validate <profile.json> [--out path]",
   "  career decision validate <decision.json> [--out path]",
+  "Output is create-only. Single-file replacement: --expected-hash sha256:<current-file-hash>",
 ].join("\n");
 
 if (isDirectExecution(import.meta.url, process.argv[1])) {
@@ -69,15 +72,17 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
 
 async function analyze(argument: string | undefined, options: string[], io: CliIo) {
   const output = optionValue(options, "--out");
+  const expectedHash = expectedOutputHash(options, output);
   const resolvedInput = await resolveArgument(argument, options, io);
 
   if (isBatchResolution(resolvedInput)) {
+    if (expectedHash !== null) throw new Error("--expected-hash only supports a single output file");
     if (output) return outputBatchJson(resolvedInput, output, io);
     await outputJson(resolvedInput, undefined, io);
     return resolvedInput.jobs.length === 0 ? 1 : 0;
   }
 
-  await outputJson(resolvedInput, output, io);
+  await outputJson(resolvedInput, output, io, expectedHash);
   return 0;
 }
 
@@ -85,7 +90,7 @@ async function validateAnalysis(path: string | undefined, options: string[], io:
   if (!path) throw new Error("Analysis JSON path is required");
   const output = optionValue(options, "--out");
   const parsed = parseJobAnalysis(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
-  await outputJson(parsed, output, io);
+  await outputJson(parsed, output, io, expectedOutputHash(options, output));
   return 0;
 }
 
@@ -93,7 +98,7 @@ async function validateProfile(path: string | undefined, options: string[], io: 
   if (!path) throw new Error("Profile JSON path is required");
   const output = optionValue(options, "--out");
   const parsed = parseCandidateProfile(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
-  await outputJson(parsed, output, io);
+  await outputJson(parsed, output, io, expectedOutputHash(options, output));
   return 0;
 }
 
@@ -101,7 +106,7 @@ async function validateDecision(path: string | undefined, options: string[], io:
   if (!path) throw new Error("Decision JSON path is required");
   const output = optionValue(options, "--out");
   const parsed = parseJobDecision(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
-  await outputJson(parsed, output, io);
+  await outputJson(parsed, output, io, expectedOutputHash(options, output));
   return 0;
 }
 
@@ -126,7 +131,7 @@ async function resolveArgument(argument: string | undefined, options: string[], 
   return resolveJobInput({ type: "file", path: argument });
 }
 
-async function outputJson(value: unknown, path: string | undefined, io: CliIo) {
+async function outputJson(value: unknown, path: string | undefined, io: CliIo, expectedHash: string | null = null) {
   const json = serializeJson(value);
   if (!path) {
     io.writeStdout(json);
@@ -134,8 +139,8 @@ async function outputJson(value: unknown, path: string | undefined, io: CliIo) {
   }
 
   const target = resolve(path);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, json, "utf8");
+  for (const warning of await artifactPrivacyWarnings(target)) io.writeStderr(`Privacy warning: ${warning}\n`);
+  await writeArtifact(target, json, expectedHash);
   io.writeStderr(`Wrote ${target}\n`);
 }
 
@@ -148,22 +153,37 @@ async function outputBatchJson(batch: JobBatchResolution, path: string, io: CliI
   const total = batch.jobs.length + batch.failures.length;
   const usedFileNames = new Map<string, number>();
   io.writeStderr(`Analyzing ${total} jobs...\n`);
-  await mkdir(targetDirectory, { recursive: true });
+  let succeeded = 0;
+  let failed = batch.failures.length;
 
   for (const job of batch.jobs) {
     const fileName = nextBatchFileName(job.source.value, usedFileNames);
-    await writeFile(resolve(targetDirectory, fileName), serializeJson(job), "utf8");
-    io.writeStderr(`✓ ${basename(job.source.value, extname(job.source.value))}\n`);
+    try {
+      for (const warning of await artifactPrivacyWarnings(resolve(targetDirectory, fileName))) io.writeStderr(`Privacy warning: ${warning}\n`);
+      await writeArtifact(resolve(targetDirectory, fileName), serializeJson(job));
+      succeeded += 1;
+      io.writeStderr(`✓ ${basename(job.source.value, extname(job.source.value))}\n`);
+    } catch (error) {
+      failed += 1;
+      io.writeStderr(`✗ ${fileName} - ${error instanceof Error ? error.message : "Unable to write output"}\n`);
+    }
   }
 
   for (const failure of batch.failures) {
     io.writeStderr(`✗ ${basename(failure.path, extname(failure.path))} - ${failure.message}\n`);
   }
 
-  io.writeStderr(`${batch.jobs.length} succeeded\n`);
-  if (batch.failures.length > 0) io.writeStderr(`${batch.failures.length} failed\n`);
+  io.writeStderr(`${succeeded} succeeded\n`);
+  if (failed > 0) io.writeStderr(`${failed} failed\n`);
 
-  return batch.jobs.length === 0 ? 1 : 0;
+  return failed > 0 || succeeded === 0 ? 1 : 0;
+}
+
+function expectedOutputHash(options: string[], output: string | undefined): string | null {
+  const hash = optionValue(options, "--expected-hash");
+  if (hash === undefined) return null;
+  if (!output || !/^sha256:[a-f0-9]{64}$/.test(hash)) throw new Error("--expected-hash requires --out and a sha256:<64 lowercase hex digits> token");
+  return hash;
 }
 
 function isBatchResolution(value: unknown): value is JobBatchResolution {

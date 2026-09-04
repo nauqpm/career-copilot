@@ -67,7 +67,7 @@ To create an immutable revision, first read the current profile hash, then publi
 pnpm dev profile publish ./draft-profile.json --root . --confirm --expected-hash sha256:<current-hash>
 ```
 
-`--confirm` is mandatory. The dashboard sends the same confirmation through `POST /api/profile/publish`; it also sends `If-Match` from the profile it loaded. A stale hash is rejected, and the local draft can be retained while the candidate reloads and reconciles the current file. The older `PUT /api/profile` route remains a compatibility alias for confirmed local publishing.
+`--confirm` is mandatory. The dashboard sends the same confirmation through `POST /api/profile/publish`; it also sends `If-Match` from the profile it loaded. A stale hash is rejected, and the local draft can be retained while the candidate reloads and reconciles the current file. The older `PUT /api/profile` route remains a legacy compatibility alias: it accepts the old raw profile body and treats that caller-owned mutation as candidate-confirmed because the legacy contract has no confirmation field.
 
 A publish creates evidence from exact non-empty profile leaf values. Candidate-confirmed evidence is `user-asserted`; source/document/public-link evidence can be `supported`; `unverified` evidence remains `needs-confirmation`. The UI shows unresolved claims and revision history. Role tracks are optional free-text labels, so Vietnamese and English labels can coexist without a closed IT taxonomy. M2 stores user-supplied text and references; it does not fetch URLs, PDF files, GitHub repositories, or call AI automatically.
 

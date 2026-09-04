@@ -17,7 +17,7 @@ The implementation stays local and preserves the existing workflow. There is no 
 - `data/profile/evidence/<evidence-id>.json` stores content-hashed evidence items.
 - `data/profile/revisions/<revision-id>.json` stores content-hashed immutable revisions with claim paths, evidence IDs, statuses and optional `supersedes`.
 - `data/profile/current.json` points to the active revision ID and exact revision hash.
-- A revision is published only after candidate confirmation and an exact current hash (`If-Match` in the API or `--expected-hash` in the CLI).
+- A new dashboard/CLI revision is published only after candidate confirmation and an exact current hash (`If-Match` in the API or `--expected-hash` in the CLI). The legacy `PUT /api/profile` alias accepts its old raw profile body and auto-confirms the caller-owned mutation because that compatibility shape has no confirmation field.
 - `GET /api/profile/history` lists valid revisions and marks the active one. `GET /api/profile/revisions/:id` reads one revision. `POST /api/profile/publish` creates a revision. `PUT /api/profile` remains a compatibility alias.
 - `profile publish` requires `--confirm`, `--root` and `--expected-hash`. The command prints the published profile, revision and unresolved count.
 - `candidate-confirmed` evidence maps to `user-asserted`; source/document/public-link evidence maps to `supported`; `unverified` remains `needs-confirmation`.

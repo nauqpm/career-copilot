@@ -40,7 +40,7 @@ POST /api/profile/publish
 PUT  /api/profile              (compatibility alias)
 ```
 
-`POST /api/profile/publish` accepts `{ "profile": <CandidateProfile>, "confirmed": true, "evidence": [<EvidenceDraft>], "roleTracks": [<string>] }`. A successful response is `201` with `{ profile, revision, unresolvedCount }` and an ETag for the new revision. Missing confirmation is rejected; a missing or stale `If-Match` cannot overwrite the active state.
+`POST /api/profile/publish` accepts `{ "profile": <CandidateProfile>, "confirmed": true, "evidence": [<EvidenceDraft>], "roleTracks": [<string>] }`. A successful response is `201` with `{ profile, revision, unresolvedCount }` and an ETag for the new revision. Missing confirmation is rejected; a missing or stale `If-Match` cannot overwrite the active state. The legacy `PUT /api/profile` alias accepts the old raw profile body and auto-confirms that caller-owned mutation because the compatibility shape has no confirmation field; new dashboard and CLI publishes use explicit confirmation.
 
 The CLI equivalent is:
 

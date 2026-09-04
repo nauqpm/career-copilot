@@ -127,4 +127,3 @@ function revisionPath(root: string, id: string): string { return join(revisionsD
 function evidencePath(root: string, id: string): string { return join(profileDirectory(root), "evidence", `${id}.json`); }
 function profileDirectory(root: string): string { return resolve(root, "data", "profile"); }
 function isCode(error: unknown, code: string): boolean { return typeof error === "object" && error !== null && "code" in error && error.code === code; }
-

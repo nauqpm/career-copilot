@@ -127,4 +127,3 @@ test("maps verified source evidence to supported without marking it unresolved",
   assert.equal(result.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")?.status, "supported");
   assert.equal((await readProfileHistory(root)).revisions[0].unresolvedCount, 0);
 });
-

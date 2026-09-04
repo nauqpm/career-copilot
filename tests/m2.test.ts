@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { runCli } from "../src/cli.js";
 import { createWorkspaceServer } from "../src/web/server.js";
+import { readProfileSnapshot } from "../src/profile/storage.js";
 
 const profile = { experience: [], skills: ["TypeScript"], education: [], languages: [] };
 
@@ -43,13 +44,53 @@ test("profile publish rejects a stale token without mutation", async () => {
   } finally { await app.close(); }
 });
 
+test("profile API validates evidence before writing and exposes immutable revision ETags", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m2-"));
+  const app = await serve(root);
+  try {
+    const missingToken = await fetch(`${app.url}/api/profile/publish`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile, confirmed: true }) });
+    assert.equal(missingToken.status, 428);
+    const invalidEvidence = await fetch(`${app.url}/api/profile/publish`, { method: "POST", headers: { "content-type": "application/json", "if-match": '"missing"' }, body: JSON.stringify({ profile, confirmed: true, evidence: [{ verification: "unverified" }] }) });
+    assert.equal(invalidEvidence.status, 400);
+    assert.equal((await (await fetch(`${app.url}/api/profile/history`)).json() as any).revisions.length, 0);
+    const created = await fetch(`${app.url}/api/profile/publish`, { method: "POST", headers: { "content-type": "application/json", "if-match": '"missing"' }, body: JSON.stringify({ profile, confirmed: true }) });
+    const createdBody = await created.json() as any;
+    const revisionId = createdBody.revision.id;
+    const revision = await fetch(`${app.url}/api/profile/revisions/${revisionId}`);
+    assert.equal(revision.status, 200);
+    assert.equal(revision.headers.get("etag"), `"${created.headers.get("etag")!.slice(1, -1)}"`);
+    const put = await fetch(`${app.url}/api/profile`, { method: "PUT", headers: { "content-type": "application/json", "if-match": created.headers.get("etag")! }, body: JSON.stringify({ ...profile, skills: ["Go"] }) });
+    assert.equal(put.status, 200);
+    assert.match(put.headers.get("etag")!, /^"sha256:/);
+  } finally { await app.close(); }
+});
+
+test("summary keeps source and history readable when the active pointer is corrupt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m2-"));
+  await mkdir(join(root, "data", "profile"), { recursive: true });
+  await writeFile(join(root, "data", "profile", "source.md"), "# Profile\n");
+  await writeFile(join(root, "data", "profile", "current.json"), "{broken");
+  const app = await serve(root);
+  try {
+    const summary = await (await fetch(`${app.url}/api/summary`)).json() as any;
+    assert.ok(summary.profileError);
+    assert.match(summary.profileSourceHash, /^sha256:/);
+    assert.deepEqual(summary.profileHistory, { revisions: [] });
+  } finally { await app.close(); }
+});
+
 test("CLI profile publish requires confirmation and accepts the current hash", async () => {
   const root = await mkdtemp(join(tmpdir(), "career-m2-"));
   const input = join(root, "profile.json");
   await writeFile(input, JSON.stringify(profile));
   const io = { writeStdout() {}, writeStderr() {}, async readStdin() { return ""; } };
   assert.equal(await runCli(["profile", "publish", input, "--root", root], io), 1);
-  assert.equal(await runCli(["profile", "publish", input, "--root", root, "--confirm"], io), 0);
+  await mkdir(join(root, "data", "profile"), { recursive: true });
+  const legacy = `${JSON.stringify(profile, null, 2)}\n`;
+  await writeFile(join(root, "data", "profile", "candidate-profile.json"), legacy);
+  const observed = (await readProfileSnapshot(root)).hash;
+  assert.equal(await runCli(["profile", "publish", input, "--root", root, "--confirm"], io), 1);
+  assert.equal(await runCli(["profile", "publish", input, "--root", root, "--confirm", "--expected-hash", observed!], io), 0);
 });
 
 async function serve(root: string) {

@@ -266,9 +266,16 @@ async function profileSnapshot(root: string) {
 }
 
 async function profileSummary(root: string) {
+  let snapshot: Awaited<ReturnType<typeof profileSnapshot>> = { hash: null, legacy: true };
+  let profileError: string | undefined;
+  try { snapshot = await profileSnapshot(root); } catch {
+    profileError = "Không đọc được hồ sơ hoặc phiên bản hiện tại. Dữ liệu được giữ nguyên; hãy kiểm tra hoặc khôi phục trước khi chỉnh sửa.";
+  }
+  let history: Awaited<ReturnType<typeof readProfileHistory>> = { revisions: [] };
+  try { history = await readProfileHistory(root); } catch {
+    if (!profileError) profileError = "Không đọc được lịch sử hồ sơ. Dữ liệu hồ sơ hiện tại vẫn được giữ nguyên.";
+  }
   try {
-    const snapshot = await profileSnapshot(root);
-    const history = await readProfileHistory(root);
     const unresolvedClaims = snapshot.revision?.claimEvidence.filter((claim) => claim.status === "needs-confirmation").map((claim) => claim.claimPath) ?? [];
     const profileRevision = snapshot.revision ? {
       id: snapshot.revision.id,
@@ -284,9 +291,9 @@ async function profileSummary(root: string) {
     } catch {
       profileSourceError = "Không đọc được tệp nguồn hồ sơ. Hãy kiểm tra hoặc khôi phục tệp nguồn; hồ sơ hiện tại vẫn có thể chỉnh sửa.";
     }
-    return { profile: snapshot.profile, profileHash: snapshot.hash, profileSourceHash, profileSourceError, profileRevision, profileHistory: history, unresolvedClaims };
+    return { profile: snapshot.profile, profileHash: snapshot.hash, profileSourceHash, profileSourceError, ...(profileError ? { profileError } : {}), profileRevision, profileHistory: history, unresolvedClaims };
   } catch {
-    return { profileHash: null, profileSourceHash: null, profileError: "Không đọc được hồ sơ hoặc tệp nguồn. Dữ liệu được giữ nguyên; hãy kiểm tra hoặc khôi phục trước khi chỉnh sửa.", profileRevision: null, profileHistory: { revisions: [] }, unresolvedClaims: [] };
+    return { profile: snapshot.profile, profileHash: snapshot.hash, profileSourceHash: null, profileSourceError: undefined, ...(profileError ? { profileError } : {}), profileRevision: null, profileHistory: history, unresolvedClaims: [] };
   }
 }
 

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { readProfileHistory, readProfileSnapshot, publishProfileRevision, saveProfileSource } from "../profile/storage.js";
+import { readProfileHistory, readProfileSnapshot, publishProfileRevision, saveProfileSource, validateProfileRevisionEvidence } from "../profile/storage.js";
 import { parseCandidateProfile } from "../profile/schema.js";
 import { parseEvidenceDraft, type EvidenceDraft } from "../profile/evidence.js";
 import { parseProfileRevision } from "../profile/versions.js";
@@ -75,7 +75,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       const artifact = await readArtifact(join(root, "data", "profile", "revisions", `${id}.json`));
       if (!artifact) return sendJson(response, 404, { error: "Not found" });
       let revision;
-      try { revision = parseProfileRevision(JSON.parse(artifact.content) as unknown); } catch (error) { throw new CorruptionError(error); }
+      try {
+        revision = parseProfileRevision(JSON.parse(artifact.content) as unknown);
+        await validateProfileRevisionEvidence(root, revision);
+      } catch (error) { throw new CorruptionError(error); }
       if (revision.id !== id) return sendJson(response, 404, { error: "Not found" });
       setVersion(response, artifact.hash);
       return sendJson(response, 200, revision);

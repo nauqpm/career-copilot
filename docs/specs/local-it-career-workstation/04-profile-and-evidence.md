@@ -20,6 +20,8 @@ The reader first checks `data/profile/current.json`. When it is absent, it reads
 
 A revision claim path points to a non-empty leaf in that revision's profile, for example `skills[0]` or `experience[0].title`. A publish with no evidence draft creates candidate-confirmed evidence whose quote and claim equal the exact leaf value. A supplied draft may reference a source/document/public link, but the candidate still explicitly confirms the profile publish. There is no network fetch or automatic AI extraction in M2.
 
+When a claim's path and value remain unchanged, a subsequent publish retains its evidence IDs and status unless replacement evidence is explicitly supplied. For leaves inside an experience, education or language record, that entire record must also remain unchanged; an equal leaf value at the same array index is not sufficient to reuse evidence for a different employer or language. Unverified evidence is not silently confirmed by editing another section. Draft JSON field order does not affect validation, and existing stored evidence hashes remain compatible.
+
 ## Verification and language boundaries
 
 The stored verification values are:
@@ -51,6 +53,8 @@ pnpm dev profile publish ./draft-profile.json --root . --confirm --expected-hash
 ## Recovery and orphan handling
 
 Writes use the existing local artifact writer and preserve the previous valid artifact. A revision file is never edited in place. If `current.json` is malformed, points to a missing revision, or its hash does not match the revision file, active profile reads fail closed so the UI can warn the candidate. History independently skips malformed orphan revision files and still lists valid revisions; a valid but unpointed revision is visible as inactive.
+
+Active and individual revision reads also validate each referenced evidence file, its content hash, ID and claim locator. Missing, corrupt or mismatched evidence blocks the read and publication from that snapshot, triggering the existing recovery warning. History excludes revisions with invalid evidence while retaining healthy revisions. Restore the original evidence files as well as the revision and pointer when recovering; no damaged files are deleted automatically.
 
 Recovery is manual and additive: copy the workspace, identify a valid revision by parsing it and computing its file hash, then restore `current.json` with that revision's exact ID and hash. Keep malformed or unpointed files for inspection. If `current.json` is absent, the legacy profile fallback remains available. The implementation does not silently promote an orphan revision or mark it reviewed.
 

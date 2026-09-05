@@ -42,6 +42,53 @@ test("parses an evidence draft without an envelope hash", () => {
   assert.equal(draft.id, undefined);
 });
 
+test("accepts draft JSON independently of top-level and nested property order", () => {
+  const expected = {
+    createdBy: { kind: "agent", role: "profile-review", skillVersion: "1" },
+    claim: "Có kinh nghiệm TypeScript", claimType: "technical-capability",
+    source: { kind: "cv", artifactId: "cv-1", locator: "skills[0]" },
+    quote: "TypeScript", verification: "source-excerpt",
+    limitations: ["Candidate supplied"], language: "vi",
+  };
+  const reordered = {
+    language: " vi ", limitations: [" Candidate supplied "],
+    verification: "source-excerpt", quote: " TypeScript ",
+    source: { locator: " skills[0] ", artifactId: " cv-1 ", kind: "cv" },
+    claimType: "technical-capability", claim: " Có kinh nghiệm TypeScript ",
+    createdBy: { skillVersion: " 1 ", role: " profile-review ", kind: "agent" },
+  };
+  assert.deepEqual(parseEvidenceDraft(JSON.parse(JSON.stringify(reordered))), expected);
+  assert.deepEqual(parseEvidenceDraft(expected), expected);
+});
+
+test("accepts optional language before limitations in a draft", () => {
+  const draft = {
+    createdBy: { kind: "candidate" }, claim: "TypeScript", claimType: "technical-capability",
+    source: { kind: "cv", artifactId: "cv-1", locator: "skills[0]" },
+    quote: "TypeScript", verification: "source-excerpt", language: "vi", limitations: ["Self reported"],
+  };
+  assert.deepEqual(parseEvidenceDraft(draft), draft);
+});
+
+test("still validates draft fields before accepting evidence", () => {
+  const draft = {
+    createdBy: { kind: "candidate" }, claim: "TypeScript", claimType: "technical-capability",
+    source: { kind: "cv", artifactId: "cv-1", locator: "skills[0]" },
+    quote: "TypeScript", verification: "source-excerpt",
+  };
+  for (const [overrides, error] of [
+    [{ claim: " " }, /claim/],
+    [{ quote: " " }, /quote/],
+    [{ createdBy: { kind: "unknown" } }, /createdBy/],
+    [{ source: { kind: "cv", artifactId: "", locator: "skills[0]" } }, /source.artifactId/],
+    [{ limitations: [""] }, /limitations/],
+    [{ language: " " }, /language/],
+    [{ createdAt: "not-a-timestamp" }, /createdAt/],
+  ] as const) {
+    assert.throws(() => parseEvidenceDraft({ ...draft, ...overrides }), error);
+  }
+});
+
 test("rejects non-UTC or malformed evidence timestamps", () => {
   assert.throws(() => parseEvidenceItem(evidence({ createdAt: "2026-09-04T05:00:00+07:00" })), /createdAt/);
   assert.throws(() => parseEvidenceItem(evidence({ createdAt: "not-a-timestamp" })), /createdAt/);

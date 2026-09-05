@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -126,3 +126,20 @@ async function serve(root: string) {
   if (!address || typeof address === "string") throw new Error("No port");
   return { url: `http://127.0.0.1:${address.port}`, close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) };
 }
+
+test("missing evidence produces a recovery warning and rejects active and historical reads", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m2-"));
+  const app = await serve(root);
+  try {
+    const response = await fetch(`${app.url}/api/profile/publish`, { method: "POST", headers: { "content-type": "application/json", "if-match": '"missing"' }, body: JSON.stringify({ profile, confirmed: true }) });
+    assert.equal(response.status, 201);
+    const { revision } = await response.json() as any;
+    await unlink(join(root, "data", "profile", "evidence", `${revision.claimEvidence[0].evidenceIds[0]}.json`));
+    assert.equal((await fetch(`${app.url}/api/profile`)).status, 500);
+    assert.equal((await fetch(`${app.url}/api/profile/revisions/${revision.id}`)).status, 500);
+    const summary = await (await fetch(`${app.url}/api/summary`)).json() as any;
+    assert.ok(summary.profileError);
+    assert.equal(summary.profileRevision, null);
+    assert.deepEqual(summary.profileHistory.revisions, []);
+  } finally { await app.close(); }
+});

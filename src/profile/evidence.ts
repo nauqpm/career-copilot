@@ -22,6 +22,13 @@ const sourceKinds = new Set<EvidenceSourceKind>(["profile-source", "cv", "portfo
 const verifications = new Set<EvidenceVerification>(["candidate-confirmed", "source-excerpt", "public-link", "document-excerpt", "unverified"]);
 
 export function parseEvidenceItem(value: unknown): EvidenceItem {
+  const item = normalizeEvidenceItem(value);
+  if (!/^sha256:[0-9a-f]{64}$/.test(item.contentHash)) throw new Error("contentHash is invalid");
+  if (hashWithoutContent(item) !== item.contentHash) throw new Error("contentHash does not match evidence");
+  return item;
+}
+
+function normalizeEvidenceItem(value: unknown): EvidenceItem {
   if (!record(value)) throw new Error("Evidence item must be a JSON object");
   if (value.schemaVersion !== 1) throw new Error("schemaVersion must be 1");
   required(value.id, "id"); required(value.createdAt, "createdAt"); required(value.claim, "claim"); required(value.quote, "quote"); required(value.contentHash, "contentHash");
@@ -36,20 +43,13 @@ export function parseEvidenceItem(value: unknown): EvidenceItem {
   const item = { schemaVersion: 1 as const, id: value.id.trim(), createdAt: value.createdAt.trim(), createdBy, contentHash: value.contentHash.trim(), claim: value.claim.trim(), claimType: value.claimType as EvidenceClaimType,
     source: { kind: value.source.kind as EvidenceSourceKind, artifactId: value.source.artifactId.trim(), locator: value.source.locator.trim() }, quote: value.quote.trim(), verification: value.verification as EvidenceVerification,
     ...optionalList(value.limitations, "limitations"), ...textOptional(value, ["language"]) };
-  if (!/^sha256:[0-9a-f]{64}$/.test(item.contentHash)) throw new Error("contentHash is invalid");
-  if (hashWithoutContent(item) !== item.contentHash) throw new Error("contentHash does not match evidence");
   return item;
 }
 
 export function parseEvidenceDraft(value: unknown): EvidenceDraft {
   if (!record(value)) throw new Error("Evidence draft must be a JSON object");
-  const normalized: Record<string, any> = { ...value, claim: typeof value.claim === "string" ? value.claim.trim() : value.claim, quote: typeof value.quote === "string" ? value.quote.trim() : value.quote,
-    language: typeof value.language === "string" ? value.language.trim() : value.language,
-    limitations: Array.isArray(value.limitations) ? value.limitations.map((item) => typeof item === "string" ? item.trim() : item) : value.limitations,
-    source: record(value.source) ? { ...value.source, artifactId: typeof value.source.artifactId === "string" ? value.source.artifactId.trim() : value.source.artifactId, locator: typeof value.source.locator === "string" ? value.source.locator.trim() : value.source.locator } : value.source,
-    createdBy: record(value.createdBy) ? { ...value.createdBy, role: typeof value.createdBy.role === "string" ? value.createdBy.role.trim() : value.createdBy.role, skillVersion: typeof value.createdBy.skillVersion === "string" ? value.createdBy.skillVersion.trim() : value.createdBy.skillVersion } : value.createdBy };
-  const envelopeBase = { schemaVersion: 1 as const, id: typeof normalized.id === "string" ? normalized.id.trim() : normalized.id ?? "draft", createdAt: normalized.createdAt ?? "1970-01-01T00:00:00.000Z", contentHash: "", ...normalized };
-  const envelope = parseEvidenceItem({ ...envelopeBase, contentHash: hashWithoutContent(envelopeBase) });
+  // Drafts share stored-item validation and normalization, but have no hash to verify.
+  const envelope = normalizeEvidenceItem({ schemaVersion: 1, id: "draft", createdAt: "1970-01-01T00:00:00.000Z", ...value, contentHash: "draft" });
   const { schemaVersion: _schemaVersion, id, createdAt, contentHash: _contentHash, ...draft } = envelope;
   return { ...draft, ...(value.id === undefined ? {} : { id }), ...(value.createdAt === undefined ? {} : { createdAt }) };
 }

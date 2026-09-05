@@ -127,3 +127,67 @@ test("maps verified source evidence to supported without marking it unresolved",
   assert.equal(result.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")?.status, "supported");
   assert.equal((await readProfileHistory(root)).revisions[0].unresolvedCount, 0);
 });
+
+for (const verification of ["document-excerpt", "unverified"] as const) {
+  test(`retains unchanged ${verification} evidence when another profile section changes`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+    const first = await publishProfileRevision(root, node, null, { confirmed: true, evidence: [{
+      createdBy: { kind: "candidate" }, claim: "TypeScript", claimType: "technical-capability",
+      source: { kind: "source-document", artifactId: "cv-1", locator: "skills[0]" },
+      quote: "Built TypeScript APIs", verification,
+    }] });
+    const original = first.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")!;
+    const path = join(root, "data", "profile", "evidence", `${original.evidenceIds[0]}.json`);
+    const bytes = await readFile(path, "utf8");
+    const second = await publishProfileRevision(root, { ...node, headline: "Backend engineer" }, first.revisionHash, { confirmed: true });
+    assert.deepEqual(second.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]"), original);
+    assert.equal(await readFile(path, "utf8"), bytes);
+    assert.equal(second.unresolvedCount, verification === "unverified" ? 1 : 0);
+    const third = await publishProfileRevision(root, { ...node, skills: ["Go"] }, second.revisionHash, { confirmed: true });
+    assert.notDeepEqual(third.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")?.evidenceIds, original.evidenceIds);
+  });
+}
+
+test("does not reuse fluency evidence after changing the language at the same path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+  const english = { ...node, languages: [{ language: "English", level: "Fluent" }] };
+  const first = await publishProfileRevision(root, english, null, { confirmed: true, evidence: [{
+    createdBy: { kind: "candidate" }, claim: "Fluent English", claimType: "language",
+    source: { kind: "source-document", artifactId: "cv-1", locator: "languages[0].level" },
+    quote: "Fluent English", verification: "document-excerpt",
+  }] });
+  const second = await publishProfileRevision(root, { ...english, languages: [{ language: "Japanese", level: "Fluent" }] }, first.revisionHash, { confirmed: true });
+  const original = first.revision.claimEvidence.find((claim) => claim.claimPath === "languages[0].level")!;
+  const updated = second.revision.claimEvidence.find((claim) => claim.claimPath === "languages[0].level")!;
+  assert.notDeepEqual(updated.evidenceIds, original.evidenceIds);
+  assert.equal(updated.status, "user-asserted");
+});
+
+for (const damage of ["missing", "malformed", "changed-hash", "wrong-id", "wrong-locator"] as const) {
+  test(`rejects ${damage} referenced evidence and isolates the damaged revision in history`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "career-profile-m2-"));
+    const first = await publishProfileRevision(root, node, null, { confirmed: true });
+    const second = await publishProfileRevision(root, { ...node, skills: ["Go"] }, first.revisionHash, { confirmed: true });
+    const id = second.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")!.evidenceIds[0];
+    const path = join(root, "data", "profile", "evidence", `${id}.json`);
+    const original = await readFile(path, "utf8");
+    if (damage === "missing") await unlink(path);
+    else if (damage === "malformed") await writeFile(path, "{broken");
+    else {
+      const item = JSON.parse(original);
+      if (damage === "changed-hash") await writeFile(path, JSON.stringify({ ...item, quote: "Altered" }));
+      else {
+        const changed = damage === "wrong-id" ? { ...item, id: "different-id" } : { ...item, source: { ...item.source, locator: "skills[99]" } };
+        const { contentHash: _hash, ...rest } = changed;
+        await writeFile(path, JSON.stringify({ ...rest, contentHash: contentHash(JSON.stringify(rest)) }));
+      }
+    }
+    const pointer = await readFile(join(root, "data", "profile", "current.json"), "utf8");
+    await assert.rejects(readProfileSnapshot(root));
+    await assert.rejects(publishProfileRevision(root, node, second.revisionHash, { confirmed: true }));
+    assert.equal(await readFile(join(root, "data", "profile", "current.json"), "utf8"), pointer);
+    assert.deepEqual((await readProfileHistory(root)).revisions.map((revision) => revision.id), [first.revision.id]);
+    await writeFile(path, original);
+    assert.equal((await readProfileSnapshot(root)).revision?.id, second.revision.id);
+  });
+}

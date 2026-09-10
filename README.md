@@ -12,6 +12,8 @@ M2 adds an explicit candidate-confirmed profile publish flow, immutable profile 
 
 M3.1 adds immutable local JD captures. New paste/import writes exact `source.md` bytes, a verified `source.json` manifest and compatible `raw.json`; existing legacy jobs remain readable and visibly unknown when they have no manifest. Exact-content and same-URL checks are advisory only. Import one local text file with `pnpm dev job import <file.txt|file.md> --root <workspace>`; this command never fetches a URL or sends the JD outside the workspace.
 
+M3.2 adds candidate-controlled opportunity decisions in `data/opportunities/`: “same”, “different”, “defer” and pair-only correction are stored as immutable revisions behind a hash-checked current pointer. Source folders stay independent. A contradiction or stale tab is rejected; no decision automatically submits, deletes or rewrites a JD.
+
 ## Install
 
 ```bash

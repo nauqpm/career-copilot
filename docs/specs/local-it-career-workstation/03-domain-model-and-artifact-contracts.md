@@ -166,6 +166,10 @@ A profile revision contains facts usable across applications. It references evid
 
 The profile's current pointer MAY change. Earlier revisions MUST remain readable because documents, assessments, approvals, and submissions refer to a particular profile hash.
 
+### Delivered M3.2 opportunity decision subset
+
+Candidate-reviewed pair decisions are stored as complete immutable revisions under `data/opportunities/revisions/` with a hash-checked `current.json` pointer. A `same` relation joins a read-time connected component; `different` records an explicit exclusion; `defer` remains unresolved; `clear` removes only the named pair in a later revision. Unknown endpoints, transitive contradictions and stale pointer hashes fail closed. Source directories are never merged or deleted, and the component's smallest job ID is only a view key. Corrupt or dangling active references require repair rather than silently becoming an empty healthy state. This subset does not make existing analyses source-bound or grant application approval.
+
 ## 7. Explainable analysis, assessment, and document contracts
 
 ### 7.1 Job analysis

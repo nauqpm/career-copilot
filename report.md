@@ -1,30 +1,28 @@
-# M3.1 implementation report
+# M3.2 implementation report
 
 ## Scope
 
-Implemented local job captures and advisory exact duplicate hints on branch `feature/job-captures`.
+Implemented candidate-reviewed opportunity decisions on branch `feature/opportunity-decisions`; this branch includes the M3.1 dependency commit.
 
-- New paste and CLI single-file `.txt`/`.md` intake preserve exact UTF-8 source bytes in `source.md`.
-- `source.json` records candidate intake provenance, source kind, optional reference/filename, raw hash and normalisation version.
-- `raw.json` remains compatible and carries an ID/manifest hash marker.
-- Readers distinguish verified, legacy and invalid capture state; tampered or partially missing new captures fail closed while preserving artifacts.
-- Exact content and conservative absolute HTTP(S) URL comparisons are read-only hints. Records are never automatically merged or deleted.
-- Existing `job analyze`/`prepare` contracts remain unchanged; new `job import` does not fetch URLs.
+- Pair decisions `same`, `different`, `defer` and pair-only `clear` are validated and normalized deterministically.
+- `same` relations form read-time connected components; singleton source records remain visible and source folders remain independent.
+- Immutable complete revisions and a hash-checked `current.json` pointer preserve history and reject stale concurrent writers.
+- Unknown endpoints, transitive contradictions, corrupt pointers and invalid source references fail closed with repair-safe errors.
+- Loopback API exposes healthy state, groups and repair markers; it requires `If-Match` and explicit candidate confirmation.
 
 ## Verification
 
 Fresh checks on this branch:
 
-- `node --test --import tsx tests/job-capture.test.ts tests/job-duplicates.test.ts` — passed.
-- `node --test --import tsx tests/workspace.test.ts tests/web-smoke.test.ts tests/job-capture.test.ts tests/job-duplicates.test.ts` — 70 tests passed.
-- Full registered suite via `node --test --import tsx ...` — 177 tests passed, 0 failed.
+- `node --test --import tsx tests/opportunities.test.ts tests/opportunity-storage.test.ts tests/opportunity-api.test.ts` — passed.
+- Full registered suite including M3.1 and M3.2 tests — 186 tests passed, 0 failed.
 - `npm run build` — passed after fixing the capture marker type guard.
 - `npm test` — blocked in the sandbox by `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'`; use the explicit `node --test --import tsx` command above for the verified result.
 
 ## Review notes and limitations
 
-- The current UI displays capture health and duplicate hints; M3.2 will add candidate-reviewed persistent opportunity decisions.
+- M3.3 will add the candidate review UI; this PR intentionally exposes the API without a new browser workflow.
 - Existing legacy job source bytes are not backfilled or relabelled as verified provenance.
-- Duplicate scanning is an O(number of job directories) read-time scan and skips corrupt candidates with an incomplete-scan warning.
+- Group keys are read-time view keys, not durable application/matching identities; arbitrary component splitting is not automated.
 - No URL fetch, fuzzy matching, connector, database, background worker or semantic source-bound analysis was added.
 - The report records local verification only; no commit push, merge or remote PR was performed.

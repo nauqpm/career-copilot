@@ -49,7 +49,7 @@ Các query do agent tạo là proposal. UI phải cho phép disable từng sourc
 
 The current local release implements paste and single-file `.txt`/`.md` import only. Each successful intake creates one independent job directory with exact `source.md`, a verified `source.json` manifest and compatible `raw.json`; the source is written before raw metadata. The manifest's time is the candidate's intake time, not an invented publication or retrieval time. A legacy job without both the capture marker and manifest remains readable with unknown provenance; a partially present or tampered new capture is repairable invalid data. Exact content and conservative same-URL checks produce hints only. All source records remain independently retained, including duplicates.
 
-Folder import, browser handoff, manual URL fetch, scout/connectors, fuzzy similarity, semantic source spans, retention/purge and candidate-reviewed opportunity links are not delivered by M3.1.
+Folder import, browser handoff, manual URL fetch, scout/connectors, fuzzy similarity, semantic source spans and retention/purge are not delivered by M3.1. M3.2 adds only explicit candidate-reviewed pair decisions: source records remain independent, contradictions fail closed and correction is append-only.
 
 Mỗi lần ingest tạo một immutable **capture**, sau đó job canonical có thể tham chiếu nhiều capture. Capture tối thiểu:
 

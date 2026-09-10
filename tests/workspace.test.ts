@@ -24,7 +24,7 @@ test("creates a local job from pasted text and preserves source Markdown", async
   });
 
   assert.match(job.id, /^[a-z0-9-]+$/);
-  assert.equal(await readFile(join(root, "data", "jobs", job.id, "source.md"), "utf8"), "# Backend developer\nBuild APIs\n");
+  assert.equal(await readFile(join(root, "data", "jobs", job.id, "source.md"), "utf8"), "# Backend developer\nBuild APIs");
 });
 
 test("lists an unanalyzed job without exposing raw JSON", async () => {

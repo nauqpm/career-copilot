@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assertSafePath, readArtifact, writeArtifact } from "./artifacts.js";
+import { createJobCapture, maxCaptureBytes, parseJobCapture, serializeJobCapture, type JobCapture, type LocalJobInput } from "../job/capture.js";
+import { findExactDuplicateHints, type DuplicateCandidate, type DuplicateHint } from "../job/duplicates.js";
 
 import { type JobDecision, parseJobDecision } from "../decision/schema.js";
 import { type RawJobContent } from "../job/input.js";
@@ -35,10 +37,15 @@ export interface WorkspaceJobSummary {
   employmentType?: EmploymentType;
   workArrangement?: WorkArrangement;
   locationPreview?: string;
+  captureStatus?: "verified" | "legacy" | "invalid";
+  captureCreatedAt?: string;
+  duplicateHints?: DuplicateHint[];
+  duplicateScanIncomplete?: boolean;
 }
 
 export type WorkspaceJobDetail = WorkspaceJobSummary & {
   raw: RawJobContent;
+  capture?: JobCapture;
   analysis?: JobAnalysis;
   decision?: JobDecision;
   cvDraft?: string;
@@ -52,17 +59,34 @@ export type PastedJob = {
 const jobIdPattern = /^[a-z0-9-]+$/;
 
 export async function createPastedJob(root: string, input: PastedJob): Promise<WorkspaceJobSummary> {
-  const content = requireText(input.content, "Job content");
-  const sourceReference = input.sourceReference?.trim() || "Pasted in Career Copilot";
+  return createLocalJob(root, {
+    content: input.content,
+    sourceKind: "pasted-text",
+    sourceReference: input.sourceReference?.trim() || "Pasted in Career Copilot",
+  });
+}
+
+export async function createLocalJob(root: string, input: LocalJobInput): Promise<WorkspaceJobSummary> {
+  const content = requireCaptureText(input.content);
+  const sourceReference = input.sourceReference?.trim();
   const id = `job-${randomUUID()}`;
   const directory = jobDirectory(root, id);
-  const raw: RawJobContent = { content, source: { type: "text", value: sourceReference } };
+  const capture = createJobCapture(id, input);
+  const raw: WorkspaceRawJobContent = {
+    content: content.trim(),
+    source: {
+      type: input.sourceKind === "local-file" ? "file" : "text",
+      value: sourceReference || input.sourceFileName || (input.sourceKind === "local-file" ? "Imported local file" : "Pasted in Career Copilot"),
+    },
+    capture: { id, manifestHash: "" },
+  };
 
   await assertSafePath(directory);
   await mkdir(directory, { recursive: true });
   // Source is durable before raw metadata; interrupted creation remains a visible repair row.
-  await writeArtifact(join(directory, "source.md"), withFinalNewline(input.content));
-  await writeArtifact(join(directory, "raw.json"), `${JSON.stringify(raw, null, 2)}\n`);
+  await writeArtifact(join(directory, "source.md"), content);
+  const manifestHash = await writeArtifact(join(directory, "source.json"), serializeJobCapture(capture));
+  await writeArtifact(join(directory, "raw.json"), `${JSON.stringify({ ...raw, capture: { id, manifestHash } }, null, 2)}\n`);
 
   return readWorkspaceSummary(root, id);
 }
@@ -90,10 +114,12 @@ export async function listWorkspaceJobs(root: string): Promise<WorkspaceJobSumma
 export async function readWorkspaceJob(root: string, id: string): Promise<WorkspaceJobDetail> {
   const directory = jobDirectory(root, id);
   const raw = parseRawJobContent(await readJson(join(directory, "raw.json")));
-  const [derived, artifactMetadata] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory)]);
+  const [derived, artifactMetadata, captureState] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory), readCaptureState(directory, id, raw)]);
+  const duplicateState = await readDuplicateState(root, id, raw, captureState);
   return {
-    ...summaryFrom({ id, raw, ...derived, ...artifactMetadata }),
+    ...summaryFrom({ id, raw, ...derived, ...artifactMetadata, ...captureState, ...duplicateState }),
     raw,
+    ...(captureState.capture === undefined ? {} : { capture: captureState.capture }),
     ...derived,
   };
 }
@@ -125,8 +151,8 @@ export async function saveWorkspaceJobNote(root: string, jobId: string, content:
 async function readWorkspaceSummary(root: string, id: string): Promise<WorkspaceJobSummary> {
   const directory = jobDirectory(root, id);
   const raw = parseRawJobContent(await readJson(join(directory, "raw.json")));
-  const [derived, artifactMetadata] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory)]);
-  return summaryFrom({ id, raw, ...derived, ...artifactMetadata });
+  const [derived, artifactMetadata, captureState] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory), readCaptureState(directory, id, raw)]);
+  return summaryFrom({ id, raw, ...derived, ...artifactMetadata, ...captureState });
 }
 
 async function readDerivedData(directory: string): Promise<{
@@ -163,6 +189,13 @@ function summaryFrom(input: {
   artifactStatus: WorkspaceArtifactStatus;
   updatedAt: string;
   cvDraftUpdatedAt?: string;
+  capture?: JobCapture;
+  captureStatus: "verified" | "legacy" | "invalid";
+  captureCreatedAt?: string;
+  sourceHash?: string;
+  invalidSourceData?: string;
+  duplicateHints?: DuplicateHint[];
+  duplicateScanIncomplete?: boolean;
 }): WorkspaceJobSummary {
   return {
     id: input.id,
@@ -183,7 +216,59 @@ function summaryFrom(input: {
     ...(input.analysis?.employment?.locations?.[0] === undefined
       ? {}
       : { locationPreview: input.analysis.employment.locations[0].raw }),
+    captureStatus: input.captureStatus,
+    ...(input.captureCreatedAt === undefined ? {} : { captureCreatedAt: input.captureCreatedAt }),
+    ...(input.invalidSourceData === undefined ? {} : { invalidSourceData: input.invalidSourceData }),
+    ...(input.duplicateHints === undefined ? {} : { duplicateHints: input.duplicateHints }),
+    ...(input.duplicateScanIncomplete === undefined ? {} : { duplicateScanIncomplete: input.duplicateScanIncomplete }),
   };
+}
+
+type WorkspaceRawJobContent = RawJobContent & { capture?: { id: string; manifestHash: string } };
+
+async function readCaptureState(directory: string, id: string, raw: WorkspaceRawJobContent): Promise<{
+  capture?: JobCapture;
+  captureStatus: "verified" | "legacy" | "invalid";
+  captureCreatedAt?: string;
+  sourceHash?: string;
+  invalidSourceData?: string;
+}> {
+  const manifest = await readArtifact(join(directory, "source.json"));
+  const source = await readArtifact(join(directory, "source.md"));
+  if (manifest === undefined && raw.capture === undefined) return { captureStatus: "legacy", ...(source === undefined ? {} : { sourceHash: source.hash }) };
+  try {
+    if (manifest === undefined || raw.capture === undefined || raw.capture.id !== id || raw.capture.manifestHash !== manifest.hash) throw new Error("Capture reference is missing or inconsistent");
+    const capture = parseJobCapture(JSON.parse(manifest.content) as unknown);
+    if (capture.id !== id || source === undefined || source.hash !== capture.rawContentHash || raw.content !== source.content.trim()) throw new Error("Captured source bytes do not match their manifest");
+    return { capture, captureStatus: "verified", captureCreatedAt: capture.createdAt, sourceHash: source.hash };
+  } catch {
+    return { captureStatus: "invalid", invalidSourceData: "Nguồn JD capture bị thiếu hoặc không toàn vẹn. Dữ liệu gốc được giữ nguyên; hãy khôi phục source.md, source.json và raw.json cùng nhau." };
+  }
+}
+
+async function readDuplicateState(root: string, currentId: string, raw: WorkspaceRawJobContent, captureState: { captureStatus: "verified" | "legacy" | "invalid"; sourceHash?: string }): Promise<{ duplicateHints: DuplicateHint[]; duplicateScanIncomplete: boolean }> {
+  if (captureState.captureStatus === "invalid" || captureState.sourceHash === undefined) return { duplicateHints: [], duplicateScanIncomplete: false };
+  const candidates: DuplicateCandidate[] = [{ jobId: currentId, sourceHash: captureState.sourceHash, sourceReference: raw.source.value }];
+  let incomplete = false;
+  let entries;
+  try {
+    entries = await readdir(jobsDirectory(root), { withFileTypes: true });
+  } catch {
+    return { duplicateHints: [], duplicateScanIncomplete: true };
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !jobIdPattern.test(entry.name) || entry.name === currentId) continue;
+    try {
+      const otherRaw = parseRawJobContent(await readJson(join(jobsDirectory(root), entry.name, "raw.json")));
+      const source = await readArtifact(join(jobsDirectory(root), entry.name, "source.md"));
+      if (source === undefined) { incomplete = true; continue; }
+      candidates.push({ jobId: entry.name, sourceHash: source.hash, sourceReference: otherRaw.source.value });
+    } catch {
+      incomplete = true;
+    }
+  }
+  const [current, ...others] = candidates;
+  return { duplicateHints: findExactDuplicateHints(current!, others), duplicateScanIncomplete: incomplete };
 }
 
 async function readWorkspaceArtifactMetadata(directory: string): Promise<{
@@ -269,7 +354,7 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(artifact.content) as unknown;
 }
 
-function parseRawJobContent(value: unknown): RawJobContent {
+function parseRawJobContent(value: unknown): WorkspaceRawJobContent {
   if (!isRecord(value) || !isNonEmptyString(value.content) || !isRecord(value.source)) {
     throw new Error("Raw job content is invalid");
   }
@@ -278,9 +363,12 @@ function parseRawJobContent(value: unknown): RawJobContent {
   }
   if (!isNonEmptyString(value.source.value)) throw new Error("Raw job source is invalid");
 
+  const capture = value.capture;
+  if (capture !== undefined && (!isRecord(capture) || !isNonEmptyString(capture.id) || !isNonEmptyString(capture.manifestHash))) throw new Error("Raw job capture marker is invalid");
   return {
     content: value.content.trim(),
     source: { type: value.source.type, value: value.source.value.trim() },
+    ...(capture === undefined ? {} : { capture: { id: String(capture.id), manifestHash: String(capture.manifestHash) } }),
   };
 }
 
@@ -307,6 +395,12 @@ async function requireExistingJobDirectory(root: string, id: string): Promise<st
 function requireText(value: string, field: string): string {
   if (!isNonEmptyString(value)) throw new Error(`${field} must not be empty`);
   return value.trim();
+}
+
+function requireCaptureText(value: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error("Job content must not be empty");
+  if (Buffer.byteLength(value, "utf8") > maxCaptureBytes) throw new Error("Job content exceeds the 1 MiB limit");
+  return value;
 }
 
 function withFinalNewline(content: string): string {

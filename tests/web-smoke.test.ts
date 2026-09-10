@@ -327,6 +327,14 @@ test("detail shows readable evidence, original source, private note and a local 
   assert.doesNotMatch(html, /"requirements"\s*:/);
 });
 
+test("detail renders verified capture provenance and non-destructive duplicate hints", () => {
+  const html = renderJobDetail({ ...populatedFixture(), captureStatus: "verified", capture: { sourceKind: "pasted-text", sourceReference: "https://jobs.example.test/role", createdAt: "2026-09-11T00:00:00.000Z" }, duplicateHints: [{ jobId: "job-other", reasons: ["exact-content", "same-url"] }] });
+  assert.match(html, /Thời điểm nhập/);
+  assert.match(html, /Nội dung giống hệt/);
+  assert.match(html, /Cùng URL nguồn/);
+  assert.match(html, /hệ thống không tự gộp hay xóa JD/);
+});
+
 test("detail handles missing and malformed artifacts without invented facts or downloads", () => {
   const pending = { id: "pending-job", sourcePreview: "Source", raw: { content: "Only stated facts.", source: { value: "A source" } }, hasAnalysis: false, hasCvDraft: false };
   const html = renderJobDetail(pending);

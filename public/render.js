@@ -71,6 +71,8 @@ export function renderJobDetail(detail, note = "") {
     <div class="detail-layout">
       <article class="card evidence-sheet">
         <header class="detail-header"><div><p>${escapeHtml(detail.sourcePreview ?? "")}</p><p>${escapeHtml(jobMeta(detail))}</p>${renderTime(detail.updatedAt)}</div>${renderStatus(decision?.status, Boolean(analysis))}</header>
+        ${renderCaptureStatus(detail)}
+        ${renderDuplicateHints(detail)}
         ${detail.invalidDerivedData ? `<p class="warning" role="alert">Tài liệu dẫn xuất cần được kiểm tra: ${escapeHtml(detail.invalidDerivedData)}. Hãy yêu cầu Codex kiểm tra tệp liên quan trước khi tải lại.</p>` : ""}
         ${analysis ? renderAnalysis(analysis) : `<section class="detail-section"><h2>Chưa có phân tích</h2><p>Chưa có phân tích hợp lệ để hiển thị thông tin vị trí.</p>${renderWorkflow(detail, "analysis")}</section>`}
         ${decision ? renderDecision(decision) : `<section class="detail-section"><h2>Chưa có quyết định</h2><p>${analysis ? "Dùng phân tích đã kiểm tra và hồ sơ cá nhân để đánh giá vị trí trong Codex." : "Hoàn thành và kiểm tra phân tích JD trước khi đánh giá cùng hồ sơ cá nhân."}</p>${analysis ? renderWorkflow(detail, "decision") : ""}</section>`}
@@ -140,6 +142,22 @@ function renderArtifacts(job) {
     const present = job.artifactStatus?.[key];
     return `<li class="artifact-chip${present === true ? " available" : " missing"}">${label}<span>${present === true ? " — Đã có" : present === false ? " — Chưa có" : " — Chưa xác định"}</span></li>`;
   }).join("")}</ul>`;
+}
+
+function renderCaptureStatus(detail) {
+  if (detail.captureStatus === "invalid") return `<p class="warning" role="alert">Nguồn JD cần được khôi phục: ${escapeHtml(detail.invalidSourceData ?? "Capture không toàn vẹn.")}</p>`;
+  if (detail.captureStatus === "legacy") return '<p class="warning">Nguồn JD legacy: chưa có manifest provenance để xác minh lịch sử nhập.</p>';
+  const capture = detail.capture;
+  if (!capture) return "";
+  const source = capture.sourceKind === "local-file" ? "Tệp cục bộ" : "Văn bản dán";
+  return `<p class="capture-meta">Thời điểm nhập: ${escapeHtml(capture.createdAt)} · Loại nguồn: ${source}${capture.sourceReference ? ` · Tham chiếu: ${escapeHtml(capture.sourceReference)}` : ""}</p>`;
+}
+
+function renderDuplicateHints(detail) {
+  const hints = detail.duplicateHints ?? [];
+  const rows = hints.map((hint) => `<li><a href="${jobHref(hint.jobId)}">${escapeHtml(hint.jobId)}</a> · ${hint.reasons.map((reason) => reason === "exact-content" ? "Nội dung giống hệt" : "Cùng URL nguồn").join("; ")}</li>`).join("");
+  if (!rows && !detail.duplicateScanIncomplete) return "";
+  return `<section class="detail-section duplicate-hints"><h2>Cảnh báo trùng tham khảo</h2>${rows ? `<p>Đây chỉ là tín hiệu để bạn đối chiếu; hệ thống không tự gộp hay xóa JD.</p><ul>${rows}</ul>` : ""}${detail.duplicateScanIncomplete ? '<p class="warning">Không kiểm tra được toàn bộ JD đang lưu; danh sách trống không chứng minh JD này là duy nhất.</p>' : ""}</section>`;
 }
 
 function renderTime(value) {

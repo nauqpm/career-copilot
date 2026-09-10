@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { TextDecoder } from "node:util";
 
 import { type JobBatchResolution, resolveJobInput, resolveJobInputsInDirectory } from "./job/resolve-input.js";
 import { parseJobAnalysis } from "./job/schema.js";
@@ -11,6 +12,7 @@ import { publishProfileRevision } from "./profile/storage.js";
 import { parseJobDecision } from "./decision/schema.js";
 import { writeArtifact } from "./workspace/artifacts.js";
 import { artifactPrivacyWarnings } from "./workspace/privacy.js";
+import { createLocalJob } from "./workspace/storage.js";
 
 export type CliIo = {
   writeStdout: (chunk: string) => void;
@@ -33,6 +35,7 @@ const usage = [
   "  career job analyze <file|directory|url> [--out path]",
   "  career job analyze <text> --text [--out path]",
   "  career job analyze --stdin [--out path]",
+  "  career job import <file.txt|file.md> --root <workspace>",
   "  career job validate-analysis <analysis.json> [--out path]",
   "  career profile validate <profile.json> [--out path]",
   "  career profile publish <profile.json> --root <workspace> --confirm --expected-hash sha256:<current-hash>",
@@ -58,6 +61,7 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
 
   try {
     if (group === "job") {
+      if (command === "import") return await importJob(input, options, io);
       if (command === "analyze" || command === "prepare") return await analyze(input, options, io);
       if (command === "validate-analysis") return await validateAnalysis(input, options, io);
     }
@@ -71,6 +75,22 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
     io.writeStderr(`${error instanceof Error ? error.message : "Unexpected error"}\n`);
     return 1;
   }
+}
+
+async function importJob(path: string | undefined, options: string[], io: CliIo): Promise<number> {
+  if (!path) throw new Error("Job file path is required");
+  const root = optionValue(options, "--root");
+  if (!root) throw new Error("--root is required to import a job");
+  const extension = extname(path).toLowerCase();
+  if (extension !== ".txt" && extension !== ".md") throw new Error("Job import supports only .txt and .md files");
+  const filePath = resolve(path);
+  const info = await stat(filePath);
+  if (!info.isFile()) throw new Error("Job import requires a single file");
+  const bytes = await readFile(filePath);
+  const content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  const job = await createLocalJob(resolve(root), { content, sourceKind: "local-file", sourceFileName: basename(filePath) });
+  io.writeStdout(serializeJson(job));
+  return 0;
 }
 
 async function analyze(argument: string | undefined, options: string[], io: CliIo) {

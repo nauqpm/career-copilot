@@ -1,6 +1,6 @@
 # 03 — Domain model and artifact contracts
 
-> **Status:** Proposed for review
+> **Status:** Proposed overall; M3.1 capture subset delivered on the implementation branch
 > **Related:** [product scope](01-product-scope.md), [system architecture](02-system-architecture.md), [Vietnam IT localisation](18-vietnam-it-market-localization.md), [roadmap](19-roadmap-and-milestones.md)
 
 ## 1. Purpose and language
@@ -45,6 +45,12 @@ An opportunity is not synonymous with a source. One company may advertise the sa
 | External proof | Screenshot reference, portal confirmation ID, email/message reference | Candidate or connector | Preserve what was observed and mark confidence/ambiguity |
 
 The existing `source.md`, `raw.json`, `analysis.json`, `decision.json`, `cv-draft.md`, and `notes.md` layout is a valid starting point. Future work MUST migrate it additively: readers support old valid artifacts until a migration has written and verified the new equivalents.
+
+### Delivered M3.1 capture subset
+
+For a newly pasted or local-file job, the existing one-source-per-job layout now adds `source.json` beside `source.md`. `source.md` preserves the exact UTF-8 text supplied at intake, including BOM, line endings, whitespace and a missing final newline. `raw.json.content` remains the trimmed compatibility value and carries a capture marker containing the job ID and exact `source.json` file hash. The manifest records the candidate intake time, source kind, optional reference/filename, raw source hash and normalisation version. Readers verify the marker, manifest ID/hash and source bytes; only absence of both marker and manifest is legacy. A missing or changed new manifest is invalid, not silently promoted to legacy. Exact-content and conservative absolute HTTP(S) URL comparisons are read-only hints; they do not merge or delete source records.
+
+The local CLI import path accepts one `.txt` or `.md` file, validates fatal UTF-8 and the shared 1 MiB limit, and uses the same writer as dashboard paste. It does not call the URL-capable resolver. Older jobs and standalone `job analyze`/`prepare` output remain compatible and are not backfilled.
 
 ## 4. Workspace path contract
 

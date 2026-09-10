@@ -39,6 +39,14 @@ test("parses a candidate profile with job-search constraints", () => {
   assert.equal(profile.preferences?.minimumSalary, "20M VND/month");
 });
 
+test("preserves optional free-text role tracks", () => {
+  const profile = parseCandidateProfile({
+    experience: [], skills: [], education: [], languages: [],
+    roleTracks: [" Backend / Platform ", "Kỹ sư dữ liệu"],
+  });
+  assert.deepEqual(profile.roleTracks, ["Backend / Platform", "Kỹ sư dữ liệu"]);
+});
+
 test("rejects empty skills, missing highlights, and unsupported arrangements", () => {
   assert.throws(
     () => parseCandidateProfile({ experience: [], skills: [""], education: [], languages: [] }),

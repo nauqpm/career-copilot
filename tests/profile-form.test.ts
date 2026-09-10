@@ -166,6 +166,44 @@ test("editor escapes entered drafts and renders live validation feedback", () =>
   assert.match(html, /role="alert" aria-live="polite">Invalid profile/);
 });
 
+test("profile publish form requires confirmation and renders escaped revision history", () => {
+  const attack = '</li><img src=x onerror="alert(1)">';
+  const html = renderProfile(completeProfile(), { section: "identity", draft: profileToSectionDraft(completeProfile(), "identity") }, {
+    profileRevision: { id: attack, createdAt: "2026-09-04T00:00:00.000Z", evidenceCount: 2, unresolvedCount: 1 },
+    profileHistory: { revisions: [{ id: attack, createdAt: "2026-09-03T00:00:00.000Z", evidenceCount: 1, unresolvedCount: 1, active: true }] },
+  });
+  assert.match(html, /name="confirmed"[^>]*required/);
+  assert.doesNotMatch(html, /name="confirmed"[^>]*checked/);
+  assert.match(html, /Cần xác nhận/);
+  assert.match(html, /&lt;\/li&gt;&lt;img/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /2 bằng chứng/);
+});
+
+test("unchecked profile confirmation fails before any publish request", async () => {
+  const browser = profileBrowser();
+  await initializeBrowserApp(browser.environment);
+  await browser.edit("identity");
+  await browser.submit({ name: "Draft without confirmation", confirmed: "" });
+  assert.equal(browser.saved.length, 0);
+  assert.equal(browser.notice.role, "alert");
+  assert.match(browser.notice.textContent, /xác nhận/);
+});
+
+test("confirmation is required again after a successful publish and active history is neutral", async () => {
+  const browser = profileBrowser();
+  await initializeBrowserApp(browser.environment);
+  await browser.edit("identity");
+  await browser.submit({ name: "Confirmed once" });
+  await browser.edit("identity");
+  assert.doesNotMatch(browser.html(), /name="confirmed"[^>]*checked/);
+  await browser.submit({ name: "Must confirm again", confirmed: "" });
+  assert.equal(browser.saved.length, 1);
+  const html = renderProfile(completeProfile(), undefined, { profileHistory: { revisions: [{ id: "r1", createdAt: "2026-09-04T00:00:00.000Z", evidenceCount: 1, unresolvedCount: 0, active: true }] } });
+  assert.match(html, /Đang dùng/);
+  assert.doesNotMatch(html, /Bạn đã xác nhận/);
+});
+
 test("browser saves a complete merged profile and reuses the server result for the next group", async () => {
   const browser = profileBrowser();
   await initializeBrowserApp(browser.environment);
@@ -216,7 +254,7 @@ test("browser cannot edit a blank profile while the existing local profile is st
 test("browser locks profile inputs during an in-flight save and unlocks them when it finishes", async () => {
   let release!: () => void;
   const pending = new Promise<void>((resolve) => { release = resolve; });
-  const browser = profileBrowser(undefined, (path) => path === "/api/profile" ? pending : Promise.resolve());
+  const browser = profileBrowser(undefined, (path) => path === "/api/profile/publish" ? pending : Promise.resolve());
   await initializeBrowserApp(browser.environment);
   await browser.edit("identity");
   assert.match(browser.html(), /<fieldset[^>]*>/);
@@ -343,14 +381,14 @@ function profileBrowser(failure?: number | string, beforeRequest?: (path: string
       const loadedHash = `profile-${saved.length}`;
       await beforeRequest?.(path);
       if (path === "/api/summary") return Response.json({ jobs: [], profile: loadedProfile, profileHash: loadedHash, profileSourceHash: null });
-      assert.equal(path, "/api/profile");
-      assert.equal(options.method, "PUT");
+      assert.equal(path, "/api/profile/publish");
+      assert.equal(options.method, "POST");
       assert.equal(options.headers?.["If-Match"], `"profile-${saved.length}"`);
       if (failure === "network") throw new Error("offline");
       if (typeof failure === "number") return Response.json({ error: "Invalid profile" }, { status: failure });
-      profile = parseCandidateProfile(JSON.parse(options.body ?? "null"));
+      profile = parseCandidateProfile(JSON.parse(options.body ?? "null").profile);
       saved.push(profile);
-      return Response.json(profile, { headers: { ETag: `"profile-${saved.length}"` } });
+      return Response.json({ profile, revision: { id: `revision-${saved.length}`, createdAt: "2026-09-04T00:00:00.000Z", claimEvidence: [] }, unresolvedCount: 0 }, { headers: { ETag: `"profile-${saved.length}"` } });
     },
   };
   return {
@@ -364,7 +402,7 @@ function profileBrowser(failure?: number | string, beforeRequest?: (path: string
     },
     async submit(fields: Record<string, string>) {
       const section = html.match(/id="profile-form"[^>]*data-profile-section="([^"]+)"/)?.[1];
-      const form = { id: "profile-form", dataset: { profileSection: section }, fields, isConnected: true, button: { disabled: false }, fieldset: { disabled: false }, querySelector(selector: string) { return selector === "fieldset" ? this.fieldset : this.button; } };
+      const form = { id: "profile-form", dataset: { profileSection: section }, fields: { confirmed: "true", ...fields }, isConnected: true, button: { disabled: false }, fieldset: { disabled: false }, querySelector(selector: string) { return selector === "fieldset" ? this.fieldset : this.button; } };
       currentForm = form;
       await events.get("submit")?.({ target: form, preventDefault() {} });
       return form;

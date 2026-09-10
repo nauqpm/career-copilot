@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { type JobBatchResolution, resolveJobInput, resolveJobInputsInDirectory } from "./job/resolve-input.js";
 import { parseJobAnalysis } from "./job/schema.js";
 import { parseCandidateProfile } from "./profile/schema.js";
+import { publishProfileRevision } from "./profile/storage.js";
 import { parseJobDecision } from "./decision/schema.js";
 import { writeArtifact } from "./workspace/artifacts.js";
 import { artifactPrivacyWarnings } from "./workspace/privacy.js";
@@ -34,6 +35,7 @@ const usage = [
   "  career job analyze --stdin [--out path]",
   "  career job validate-analysis <analysis.json> [--out path]",
   "  career profile validate <profile.json> [--out path]",
+  "  career profile publish <profile.json> --root <workspace> --confirm --expected-hash sha256:<current-hash>",
   "  career decision validate <decision.json> [--out path]",
   "Output is create-only. Single-file replacement: --expected-hash sha256:<current-file-hash>",
 ].join("\n");
@@ -60,6 +62,7 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
       if (command === "validate-analysis") return await validateAnalysis(input, options, io);
     }
     if (group === "profile" && command === "validate") return await validateProfile(input, options, io);
+    if (group === "profile" && command === "publish") return await publishProfile(input, options, io);
     if (group === "decision" && command === "validate") return await validateDecision(input, options, io);
 
     io.writeStderr(`${usage}\n`);
@@ -99,6 +102,21 @@ async function validateProfile(path: string | undefined, options: string[], io: 
   const output = optionValue(options, "--out");
   const parsed = parseCandidateProfile(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
   await outputJson(parsed, output, io, expectedOutputHash(options, output));
+  return 0;
+}
+
+async function publishProfile(path: string | undefined, options: string[], io: CliIo): Promise<number> {
+  if (!path) throw new Error("Profile JSON path is required");
+  if (!options.includes("--confirm")) throw new Error("--confirm is required to publish a profile");
+  const root = optionValue(options, "--root");
+  if (!root) throw new Error("--root is required to publish a profile");
+  const expectedOption = optionValue(options, "--expected-hash");
+  if (expectedOption === undefined || !/^sha256:[a-f0-9]{64}$/.test(expectedOption)) {
+    throw new Error("--expected-hash sha256:<64 lowercase hex digits> is required to publish a profile");
+  }
+  const profile = parseCandidateProfile(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
+  const result = await publishProfileRevision(resolve(root), profile, expectedOption, { confirmed: true });
+  io.writeStdout(serializeJson({ profile: result.profile, revision: result.revision, unresolvedCount: result.unresolvedCount }));
   return 0;
 }
 

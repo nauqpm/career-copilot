@@ -14,13 +14,13 @@ test("profile editing keeps its loaded base and token after refresh, including c
   await browser.refresh();
   browser.failNext(409);
   await browser.submit("profile-form");
-  let writes = browser.requests.filter((request) => request.options.method === "PUT");
+  let writes = browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/profile/publish");
   assert.equal(writes[0]?.options.headers?.["If-Match"], '"profile-original"');
-  assert.deepEqual(JSON.parse(writes[0]?.options.body ?? "null").skills, ["Research"]);
+  assert.deepEqual(JSON.parse(writes[0]?.options.body ?? "null").profile.skills, ["Research"]);
   assert.match(browser.notice.textContent, /mở lại|tải lại/i);
   assert.match(browser.html(), /My unsaved name/);
   await browser.submit("profile-form");
-  writes = browser.requests.filter((request) => request.options.method === "PUT");
+  writes = browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/profile/publish");
   assert.equal(writes[1]?.options.headers?.["If-Match"], '"profile-original"');
 });
 
@@ -599,7 +599,10 @@ function browserFixture(initialHash: string, narrow = false) {
           sourceReference: decodeHtml(html.match(/<input[^>]*id="source-reference"[^>]*value="([^"]*)"/)?.[1] ?? ""),
         });
       }
-      if (html.includes('id="profile-form"')) currentForm = makeForm("profile-form", Object.fromEntries([...html.matchAll(/<textarea[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/g)].map((match) => [match[1], decodeHtml(match[2])])));
+      if (html.includes('id="profile-form"')) {
+        const fields = Object.fromEntries([...html.matchAll(/<textarea[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/g)].map((match) => [match[1], decodeHtml(match[2])]));
+        currentForm = makeForm("profile-form", fields);
+      }
     },
     addEventListener: (name: string, handler: Handler) => pageEvents.set(name, handler),
   };
@@ -665,10 +668,10 @@ function browserFixture(initialHash: string, narrow = false) {
       await requestHook?.(path, options);
       if (failure) { const status = failure; failure = undefined; return Response.json({ error: "Failure" }, { status }); }
       if (options.method === "POST" && path === "/api/profile/source") return new Response(null, { status: 204, headers: { ETag: '"source-saved"' } });
-      if (options.method === "PUT" && path === "/api/profile") {
-        profile = JSON.parse(options.body ?? "null");
+      if (options.method === "POST" && path === "/api/profile/publish") {
+        profile = JSON.parse(options.body ?? "null").profile;
         profileHash = "profile-saved";
-        return Response.json(profile, { headers: { ETag: `"${profileHash}"` } });
+        return Response.json({ profile, revision: { id: "revision-saved", createdAt: "2026-09-04T00:00:00.000Z", claimEvidence: [] }, unresolvedCount: 0 }, { headers: { ETag: `"${profileHash}"` } });
       }
       if (options.method === "PUT" && path === "/api/jobs/job-example/note") {
         note = JSON.parse(options.body ?? "null").content;
@@ -680,7 +683,7 @@ function browserFixture(initialHash: string, narrow = false) {
         created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };
         return Response.json(created, { status: 201 });
       }
-      if (path === "/api/summary") return Response.json({ jobs: summaryJobs ?? [jobSummary(), ...(created ? [created] : [])], profile, profileHash, profileSourceHash: sourceHash, profileError });
+      if (path === "/api/summary") return Response.json({ jobs: summaryJobs ?? [jobSummary(), ...(created ? [created] : [])], profile, profileHash, profileSourceHash: sourceHash, profileError, profileRevision: undefined, profileHistory: { revisions: [] }, unresolvedClaims: [] });
       if (path === "/api/jobs/job-example") return Response.json(detail);
       const matchedJob = path.match(/^\/api\/jobs\/([^/]+)$/);
       if (matchedJob && jobDetails[decodeURIComponent(matchedJob[1])]) return Response.json(jobDetails[decodeURIComponent(matchedJob[1])]);
@@ -700,7 +703,7 @@ function browserFixture(initialHash: string, narrow = false) {
     return currentForm;
   }
   async function submit(id: string, fields?: Record<string, string | File>) {
-    const form = updateForm(id, fields);
+    const form = updateForm(id, id === "profile-form" ? { confirmed: "true", ...fields } : fields);
     await pageEvents.get("submit")?.({ target: form, preventDefault() {} });
     await navigation;
   }

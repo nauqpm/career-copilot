@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { saveCandidateProfile, saveProfileSource } from "../profile/storage.js";
+import { readProfileHistory, readProfileSnapshot, publishProfileRevision, saveProfileSource, validateProfileRevisionEvidence } from "../profile/storage.js";
 import { parseCandidateProfile } from "../profile/schema.js";
+import { parseEvidenceDraft, type EvidenceDraft } from "../profile/evidence.js";
+import { parseProfileRevision } from "../profile/versions.js";
 import { contentHash, ConflictError, readArtifact } from "../workspace/artifacts.js";
 import { workspacePrivacyWarnings } from "../workspace/privacy.js";
 import {
@@ -58,15 +60,44 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       return sendJson(response, 201, job);
     }
     if (method === "GET" && path === "/api/profile") {
-      const snapshot = await profileSnapshot(root);
+      let snapshot;
+      try { snapshot = await readProfileSnapshot(root); } catch (error) { throw new CorruptionError(error); }
       setVersion(response, snapshot.hash);
       return sendJson(response, 200, snapshot.profile);
     }
+    if (method === "GET" && path === "/api/profile/history") {
+      return sendJson(response, 200, await readProfileHistory(root));
+    }
+    const revisionMatch = path.match(/^\/api\/profile\/revisions\/([^/]+)$/);
+    if (method === "GET" && revisionMatch) {
+      const id = decodeURIComponent(revisionMatch[1]!);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) return sendJson(response, 404, { error: "Not found" });
+      const artifact = await readArtifact(join(root, "data", "profile", "revisions", `${id}.json`));
+      if (!artifact) return sendJson(response, 404, { error: "Not found" });
+      let revision;
+      try {
+        revision = parseProfileRevision(JSON.parse(artifact.content) as unknown);
+        await validateProfileRevisionEvidence(root, revision);
+      } catch (error) { throw new CorruptionError(error); }
+      if (revision.id !== id) return sendJson(response, 404, { error: "Not found" });
+      setVersion(response, artifact.hash);
+      return sendJson(response, 200, revision);
+    }
+    if (method === "POST" && path === "/api/profile/publish") {
+      const body = profilePublishInput(await readJsonBody(request));
+      const result = await publishProfileRevision(root, body.profile, expectedVersion(request), {
+        confirmed: body.confirmed,
+        ...(body.evidence ? { evidence: body.evidence } : {}),
+        ...(body.roleTracks ? { roleTracks: body.roleTracks } : {}),
+      });
+      setVersion(response, result.revisionHash);
+      return sendJson(response, 201, { profile: result.profile, revision: result.revision, unresolvedCount: result.unresolvedCount });
+    }
     if (method === "PUT" && path === "/api/profile") {
       const profile = parseCandidateProfile(await readJsonBody(request));
-      await saveCandidateProfile(root, profile, expectedVersion(request));
-      setVersion(response, contentHash(`${JSON.stringify(profile, null, 2)}\n`));
-      return sendJson(response, 200, profile);
+      const result = await publishProfileRevision(root, profile, expectedVersion(request), { confirmed: true });
+      setVersion(response, result.revisionHash);
+      return sendJson(response, 200, result.profile);
     }
     if (method === "POST" && path === "/api/profile/source") {
       const body = await readJsonBody(request);
@@ -183,6 +214,7 @@ function sendError(response: ServerResponse, error: unknown): void {
     return;
   }
   if (error instanceof LocalRequestError) return sendJson(response, 403, { error: "Only local workspace requests are allowed." });
+  if (error instanceof CorruptionError) return sendJson(response, 500, { error: "Unable to read the local profile data. Check or recover the stored artifacts." });
   if (error instanceof PreconditionError) return sendJson(response, 428, { error: "Read the current artifact before saving (If-Match required)." });
   if (error instanceof ConflictError) return sendJson(response, 409, { error: "Artifact changed or is busy. Reload and reconcile your draft before saving." });
   if (error instanceof InputError || error instanceof SyntaxError || isValidationError(error)) {
@@ -221,6 +253,11 @@ function isMissingJobError(error: unknown): boolean {
 class InputError extends Error {}
 class LocalRequestError extends Error {}
 class PreconditionError extends Error {}
+class CorruptionError extends Error {
+  constructor(cause: unknown) {
+    super("Stored profile data is corrupt", { cause });
+  }
+}
 
 function expectedVersion(request: IncomingMessage): string | null {
   const token = request.headers["if-match"];
@@ -236,13 +273,28 @@ function setVersion(response: ServerResponse, hash: string | null): void {
 }
 
 async function profileSnapshot(root: string) {
-  const artifact = await readArtifact(join(root, "data", "profile", "candidate-profile.json"));
-  return { profile: artifact === undefined ? undefined : parseCandidateProfile(JSON.parse(artifact.content)), hash: artifact?.hash ?? null };
+  return readProfileSnapshot(root);
 }
 
 async function profileSummary(root: string) {
+  let snapshot: Awaited<ReturnType<typeof profileSnapshot>> = { hash: null, legacy: true };
+  let profileError: string | undefined;
+  try { snapshot = await profileSnapshot(root); } catch {
+    profileError = "Không đọc được hồ sơ hoặc phiên bản hiện tại. Dữ liệu được giữ nguyên; hãy kiểm tra hoặc khôi phục trước khi chỉnh sửa.";
+  }
+  let history: Awaited<ReturnType<typeof readProfileHistory>> = { revisions: [] };
+  try { history = await readProfileHistory(root); } catch {
+    if (!profileError) profileError = "Không đọc được lịch sử hồ sơ. Dữ liệu hồ sơ hiện tại vẫn được giữ nguyên.";
+  }
   try {
-    const snapshot = await profileSnapshot(root);
+    const unresolvedClaims = snapshot.revision?.claimEvidence.filter((claim) => claim.status === "needs-confirmation").map((claim) => claim.claimPath) ?? [];
+    const profileRevision = snapshot.revision ? {
+      id: snapshot.revision.id,
+      createdAt: snapshot.revision.createdAt,
+      revisionHash: snapshot.hash,
+      evidenceCount: snapshot.revision.claimEvidence.reduce((total, claim) => total + claim.evidenceIds.length, 0),
+      unresolvedCount: unresolvedClaims.length,
+    } : null;
     let profileSourceHash: string | null = null;
     let profileSourceError: string | undefined;
     try {
@@ -250,10 +302,24 @@ async function profileSummary(root: string) {
     } catch {
       profileSourceError = "Không đọc được tệp nguồn hồ sơ. Hãy kiểm tra hoặc khôi phục tệp nguồn; hồ sơ hiện tại vẫn có thể chỉnh sửa.";
     }
-    return { profile: snapshot.profile, profileHash: snapshot.hash, profileSourceHash, profileSourceError };
+    return { profile: snapshot.profile, profileHash: snapshot.hash, profileSourceHash, profileSourceError, ...(profileError ? { profileError } : {}), profileRevision, profileHistory: history, unresolvedClaims };
   } catch {
-    return { profileHash: null, profileSourceHash: null, profileError: "Không đọc được hồ sơ hoặc tệp nguồn. Dữ liệu được giữ nguyên; hãy kiểm tra hoặc khôi phục trước khi chỉnh sửa." };
+    return { profile: snapshot.profile, profileHash: snapshot.hash, profileSourceHash: null, profileSourceError: undefined, ...(profileError ? { profileError } : {}), profileRevision: null, profileHistory: history, unresolvedClaims: [] };
   }
+}
+
+function profilePublishInput(value: unknown): { profile: ReturnType<typeof parseCandidateProfile>; confirmed: true; evidence?: EvidenceDraft[]; roleTracks?: string[] } {
+  if (!isRecord(value) || value.confirmed !== true) throw new PreconditionError("Candidate confirmation is required");
+  const profile = parseCandidateProfile(value.profile);
+  const evidence = value.evidence === undefined ? undefined : (() => {
+    if (!Array.isArray(value.evidence)) throw new InputError("Evidence must be an array");
+    return value.evidence.map((item) => parseEvidenceDraft(item));
+  })();
+  const roleTracks = value.roleTracks === undefined ? undefined : (() => {
+    if (!Array.isArray(value.roleTracks) || !value.roleTracks.every((item) => typeof item === "string" && item.trim())) throw new InputError("roleTracks is invalid");
+    return value.roleTracks.map((item) => item.trim());
+  })();
+  return { profile, confirmed: true, ...(evidence ? { evidence } : {}), ...(roleTracks ? { roleTracks } : {}) };
 }
 
 function isDirectExecution(moduleUrl: string, executedPath: string | undefined): boolean {

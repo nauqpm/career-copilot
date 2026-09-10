@@ -44,7 +44,7 @@ export function initializeBrowserApp(browser = globalThis) {
       const hydratedSummary = await hydrateCvRecommendations(loadedSummary, route);
       if (version !== loadVersion) return;
       if (automatic && document.activeElement?.closest("a, button, input, textarea, select, summary")) return;
-      const summary = loadedProfileVersion === profileVersion ? hydratedSummary : { ...hydratedSummary, profile: state.profile, profileHash: state.summary.profileHash };
+      const summary = loadedProfileVersion === profileVersion ? hydratedSummary : { ...hydratedSummary, profile: state.profile, profileHash: state.summary.profileHash, profileRevision: state.summary.profileRevision, profileHistory: state.summary.profileHistory, unresolvedClaims: state.summary.unresolvedClaims };
       if (loadedNoteVersion === noteVersions[route.jobId]) noteHashes = { ...noteHashes, [route.jobId]: loadedNoteHash };
       const content = loadedNoteVersion === noteVersions[route.jobId] ? note?.content ?? "" : state.note;
       const changed = JSON.stringify([state.summary, state.detail, state.note]) !== JSON.stringify([summary, detail, content]);
@@ -132,7 +132,7 @@ export function initializeBrowserApp(browser = globalThis) {
   function rememberProfileDraft(form = document.querySelector("#profile-form")) {
     if (form?.id !== "profile-form" || !state.profileEditor) return;
     const { section, draft } = state.profileEditor;
-    const entered = { ...draft, ...Object.fromEntries(new FormData(form).entries()) };
+    const entered = { ...draft, ...Object.fromEntries([...new FormData(form).entries()].filter(([name]) => name !== "confirmed")) };
     profileDrafts = { ...profileDrafts, [section]: entered };
     state = { ...state, profileEditor: { section, draft: entered } };
   }
@@ -189,15 +189,20 @@ export function initializeBrowserApp(browser = globalThis) {
         rememberProfileDraft(form);
         const { section, draft } = state.profileEditor;
         const profile = mergeProfileSection(profileBases[section]?.profile, section, draft);
+        if (values.get("confirmed") !== "true") throw new Error("Bạn phải xác nhận thông tin hồ sơ trước khi lưu.");
         profileSaving = true;
         state = { ...state, profileEditor: { ...state.profileEditor, saving: true } };
         form.querySelector("fieldset").disabled = true;
         let savedHash;
-        const saved = await requestJson("/api/profile", { method: "PUT", headers: matchHeader(profileBases[section]?.hash), body: JSON.stringify(profile) }, (hash) => { savedHash = hash; });
+        const savedResponse = await requestJson("/api/profile/publish", { method: "POST", headers: matchHeader(profileBases[section]?.hash), body: JSON.stringify({ profile, confirmed: true }) }, (hash) => { savedHash = hash; });
+        const saved = savedResponse.profile ?? savedResponse;
         profileVersion += 1;
         profileDrafts = Object.fromEntries(Object.entries(profileDrafts).filter(([key]) => key !== section));
         profileBases = Object.fromEntries(Object.entries(profileBases).filter(([key]) => key !== section));
-        state = { ...state, profile: saved, summary: { ...state.summary, profile: saved, profileHash: rawToken(savedHash) }, profileEditor: undefined };
+        const revisionSummary = savedResponse.revision ? { id: savedResponse.revision.id, createdAt: savedResponse.revision.createdAt, revisionHash: rawToken(savedHash), evidenceCount: savedResponse.revision.claimEvidence?.reduce((total, claim) => total + claim.evidenceIds.length, 0) ?? 0, unresolvedCount: savedResponse.unresolvedCount ?? 0, active: true } : state.summary.profileRevision;
+        const previousHistory = state.summary.profileHistory?.revisions ?? [];
+        const profileHistory = savedResponse.revision ? { current: { revisionId: savedResponse.revision.id, revisionHash: rawToken(savedHash) }, revisions: [revisionSummary, ...previousHistory.map((entry) => ({ ...entry, active: false }))] } : state.summary.profileHistory;
+        state = { ...state, profile: saved, summary: { ...state.summary, profile: saved, profileHash: rawToken(savedHash), profileRevision: revisionSummary, profileHistory }, profileEditor: undefined };
         if (state.route.page === "profile") {
           state = { ...state, error: "", notice: "Đã lưu mục hồ sơ trên máy. Các nhóm khác được giữ nguyên." };
           render();

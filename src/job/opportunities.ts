@@ -55,7 +55,10 @@ export function deriveOpportunityGroups(jobIds: string[], decisions: PairDecisio
   const union = (left: string, right: string) => {
     const leftRoot = find(left);
     const rightRoot = find(right);
-    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot < rightRoot ? leftRoot : rightRoot);
+    if (leftRoot !== rightRoot) {
+      if (leftRoot < rightRoot) parent.set(rightRoot, leftRoot);
+      else parent.set(leftRoot, rightRoot);
+    }
   };
   for (const decision of normalized.filter((item) => item.relation === "same")) union(decision.leftId, decision.rightId);
   for (const decision of normalized.filter((item) => item.relation === "different")) {

@@ -1,6 +1,6 @@
 # 03 — Domain model and artifact contracts
 
-> **Status:** Proposed overall; M3.1 capture subset delivered on the implementation branch
+> **Status:** Proposed overall; M3.1 capture and M3.3 review subsets delivered on the implementation branches
 > **Related:** [product scope](01-product-scope.md), [system architecture](02-system-architecture.md), [Vietnam IT localisation](18-vietnam-it-market-localization.md), [roadmap](19-roadmap-and-milestones.md)
 
 ## 1. Purpose and language
@@ -169,6 +169,10 @@ The profile's current pointer MAY change. Earlier revisions MUST remain readable
 ### Delivered M3.2 opportunity decision subset
 
 Candidate-reviewed pair decisions are stored as complete immutable revisions under `data/opportunities/revisions/` with a hash-checked `current.json` pointer. A `same` relation joins a read-time connected component; `different` records an explicit exclusion; `defer` remains unresolved; `clear` removes only the named pair in a later revision. Unknown endpoints, transitive contradictions and stale pointer hashes fail closed. Source directories are never merged or deleted, and the component's smallest job ID is only a view key. Corrupt or dangling active references require repair rather than silently becoming an empty healthy state. This subset does not make existing analyses source-bound or grant application approval.
+
+### Delivered M3.3 candidate review subset
+
+The existing job detail route reads the opportunity view alongside the JD. It keeps group members as links to their independent source records, labels exact-content and conservative same-URL matches as advisory hints, and keeps saved `different`/`defer`/`clear` pair decisions visible. A candidate can choose a peer and relation (`same`, `different`, `defer`, `clear`) only when the view is healthy; saving requires a confirmation tied to the two IDs, relation, loaded pointer hash and current component membership. The API uses `If-Match`, rejects stale state with `409`, and the UI clears confirmation rather than retrying. A repair marker is read-only and never triggers external fetch or submission.
 
 ## 7. Explainable analysis, assessment, and document contracts
 

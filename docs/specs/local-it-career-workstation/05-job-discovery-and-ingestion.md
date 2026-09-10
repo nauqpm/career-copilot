@@ -1,6 +1,6 @@
 # 05 — Job Discovery và Ingestion
 
-**Trạng thái:** Proposed overall; M3.1 capture/provenance subset delivered, opportunity decisions remain pending
+**Trạng thái:** Proposed overall; M3.1 capture/provenance và M3.3 candidate-review subset delivered; broader discovery remains pending
 **Nền tảng:** [01 — Product scope](01-product-scope.md), [02 — Kiến trúc](02-system-architecture.md), [03 — Mô hình dữ liệu](03-domain-model-and-artifact-contracts.md)
 **Quyết định chung:** [00 — Decision log](00-decision-log.md) · **Agent:** [11 — Agent orchestration](11-agent-orchestration.md)
 **Đầu ra cho:** [06 — Explainable matching](06-explainable-matching.md), [08 — Approval và submission](08-approval-and-submission.md), [09 — Application lifecycle](09-application-lifecycle-and-outcomes.md)
@@ -49,7 +49,7 @@ Các query do agent tạo là proposal. UI phải cho phép disable từng sourc
 
 The current local release implements paste and single-file `.txt`/`.md` import only. Each successful intake creates one independent job directory with exact `source.md`, a verified `source.json` manifest and compatible `raw.json`; the source is written before raw metadata. The manifest's time is the candidate's intake time, not an invented publication or retrieval time. A legacy job without both the capture marker and manifest remains readable with unknown provenance; a partially present or tampered new capture is repairable invalid data. Exact content and conservative same-URL checks produce hints only. All source records remain independently retained, including duplicates.
 
-Folder import, browser handoff, manual URL fetch, scout/connectors, fuzzy similarity, semantic source spans and retention/purge are not delivered by M3.1. M3.2 adds only explicit candidate-reviewed pair decisions: source records remain independent, contradictions fail closed and correction is append-only.
+Folder import, browser handoff, manual URL fetch, scout/connectors, fuzzy similarity, semantic source spans and retention/purge are not delivered by M3.1–M3.3. M3.2 adds only explicit candidate-reviewed pair decisions: source records remain independent, contradictions fail closed and correction is append-only. M3.3 exposes those decisions from the existing job detail route with advisory hints, exact confirmation and stale/repair-safe read-only behavior.
 
 Mỗi lần ingest tạo một immutable **capture**, sau đó job canonical có thể tham chiếu nhiều capture. Capture tối thiểu:
 

@@ -9,13 +9,13 @@ const arrangementLabels = { onsite: "Tại nơi làm việc", hybrid: "Kết h�
 const employmentLabels = { "full-time": "Toàn thời gian", "part-time": "Bán thời gian", contract: "Hợp đồng", internship: "Thực tập", temporary: "Thời vụ" };
 const artifactLabels = [["source", "Nguồn JD"], ["analysis", "Phân tích"], ["decision", "Quyết định"], ["cvDraft", "Bản nháp CV"]];
 
-export function renderApplication({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note, jobDraft, error, notice, menuOpen = true, loading = false } = {}) {
+export function renderApplication({ route = { page: "overview" }, summary = {}, detail, opportunity, opportunityDraft, opportunityConfirmationKey, profile = summary.profile, profileEditor, note, jobDraft, error, notice, menuOpen = true, loading = false } = {}) {
   return `${renderSidebar(route, menuOpen)}<main id="workspace" class="workspace-main" aria-busy="${loading}">
     ${(summary.privacyWarnings ?? []).map((warning) => `<p class="warning" role="alert">${escapeHtml(warning)}</p>`).join("")}
     ${summary.profileSourceError ? `<p class="warning" role="alert">${escapeHtml(summary.profileSourceError)}</p>` : ""}
     ${summary.profileError ? `<p class="warning" role="alert">Hồ sơ cần được khôi phục trước khi chỉnh sửa: ${escapeHtml(summary.profileError)}</p>` : ""}
     <p id="notice" class="notice${error ? " error" : ""}" aria-atomic="true" role="${error ? "alert" : "status"}" aria-live="polite">${escapeHtml(error || notice || "")}${error && route.page === "profile" && profileEditor && !error.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}</p>
-    ${loading && route.page === "job" ? pageHeader("Đang tải JD…", "Đọc nguồn và tài liệu trên máy của bạn.") : renderPage({ route, summary, detail, profile, profileEditor, note, jobDraft })}
+    ${loading && route.page === "job" ? pageHeader("Đang tải JD…", "Đọc nguồn và tài liệu trên máy của bạn.") : renderPage({ route, summary, detail, opportunity, opportunityDraft, opportunityConfirmationKey, profile, profileEditor, note, jobDraft })}
   </main>`;
 }
 
@@ -30,10 +30,10 @@ export function renderSidebar(route = { page: "overview" }, menuOpen = true) {
   </aside>`;
 }
 
-export function renderPage({ route = { page: "overview" }, summary = {}, detail, profile = summary.profile, profileEditor, note, jobDraft } = {}) {
+export function renderPage({ route = { page: "overview" }, summary = {}, detail, opportunity, opportunityDraft, opportunityConfirmationKey, profile = summary.profile, profileEditor, note, jobDraft } = {}) {
   switch (route.page) {
     case "jobs": return renderJobs(summary);
-    case "job": return renderJobDetail(detail, note);
+    case "job": return renderJobDetail(detail, note, opportunity, opportunityDraft, opportunityConfirmationKey);
     case "profile": return summary.profileError && !profileEditor ? pageHeader("Hồ sơ cá nhân", "Hồ sơ đang lỗi. Hãy khôi phục dữ liệu rồi tải lại.") : renderProfile(profile, profileEditor, summary);
     case "cvs": return renderCvLibrary(summary);
     case "new-job": return renderNewJob(jobDraft);
@@ -61,7 +61,7 @@ export function renderJobs(summary = {}) {
   return `${pageHeader("Job descriptions", "Nguồn JD và các tài liệu đã có cho từng vị trí.")}<section class="card jobs-library" aria-label="Danh sách JD">${jobs.length ? renderJobList(jobs) : emptyJobs()}</section>`;
 }
 
-export function renderJobDetail(detail, note = "") {
+export function renderJobDetail(detail, note = "", opportunity, opportunityDraft = {}, opportunityConfirmationKey) {
   if (!detail) return `${pageHeader("Không tìm thấy JD", "JD chưa có trong thư mục cục bộ hoặc chưa tải được.")}<a href="#jobs">Trở về danh sách JD</a>`;
   const analysis = detail.analysis;
   const decision = detail.decision;
@@ -73,6 +73,7 @@ export function renderJobDetail(detail, note = "") {
         <header class="detail-header"><div><p>${escapeHtml(detail.sourcePreview ?? "")}</p><p>${escapeHtml(jobMeta(detail))}</p>${renderTime(detail.updatedAt)}</div>${renderStatus(decision?.status, Boolean(analysis))}</header>
         ${renderCaptureStatus(detail)}
         ${renderDuplicateHints(detail)}
+        ${renderOpportunityReview(detail, opportunity, opportunityDraft, opportunityConfirmationKey)}
         ${detail.invalidDerivedData ? `<p class="warning" role="alert">Tài liệu dẫn xuất cần được kiểm tra: ${escapeHtml(detail.invalidDerivedData)}. Hãy yêu cầu Codex kiểm tra tệp liên quan trước khi tải lại.</p>` : ""}
         ${analysis ? renderAnalysis(analysis) : `<section class="detail-section"><h2>Chưa có phân tích</h2><p>Chưa có phân tích hợp lệ để hiển thị thông tin vị trí.</p>${renderWorkflow(detail, "analysis")}</section>`}
         ${decision ? renderDecision(decision) : `<section class="detail-section"><h2>Chưa có quyết định</h2><p>${analysis ? "Dùng phân tích đã kiểm tra và hồ sơ cá nhân để đánh giá vị trí trong Codex." : "Hoàn thành và kiểm tra phân tích JD trước khi đánh giá cùng hồ sơ cá nhân."}</p>${analysis ? renderWorkflow(detail, "decision") : ""}</section>`}
@@ -81,6 +82,37 @@ export function renderJobDetail(detail, note = "") {
       </article>
       <aside class="detail-sidebar" aria-label="Tài liệu và ghi chú JD"><section class="card"><h2>Tài liệu của JD</h2>${renderArtifacts(detail)}</section>${renderNoteForm(note)}</aside>
     </div>`;
+}
+
+export function selectOpportunityReview(jobId, duplicateHints = [], opportunity = {}) {
+  const decisions = opportunity.snapshot?.revision?.decisions ?? [];
+  const group = opportunity.groups?.find((candidate) => candidate.jobIds?.includes(jobId));
+  const memberIds = (group?.jobIds ?? []).filter((id) => id !== jobId);
+  const pairDecision = (peerId) => decisions.find((decision) => decision.leftId === [jobId, peerId].sort()[0] && decision.rightId === [jobId, peerId].sort()[1]);
+  const suggestions = duplicateHints.filter((hint) => !memberIds.includes(hint.jobId) && pairDecision(hint.jobId) === undefined);
+  return { memberIds, suggestions, decisions: decisions.filter((decision) => decision.leftId === jobId || decision.rightId === jobId), canEdit: opportunity.health === "healthy" && opportunity.snapshot !== null && opportunity.snapshot !== undefined };
+}
+
+function renderOpportunityReview(detail, opportunity, draft = {}, confirmationKey) {
+  if (!opportunity) return "";
+  if (opportunity.health === "needs-repair") return '<section class="detail-section"><h2>Nhóm cơ hội cần khôi phục</h2><p class="warning" role="alert">Không thể ghi quyết định nhóm cơ hội cho đến khi dữ liệu được khôi phục.</p></section>';
+  const review = selectOpportunityReview(detail.id, detail.duplicateHints ?? [], opportunity);
+  const members = review.memberIds.length ? `<p>Các nguồn đã được bạn xác nhận là cùng cơ hội:</p><ul>${review.memberIds.map((id) => `<li><a href="${jobHref(id)}">${escapeHtml(id)}</a></li>`).join("")}</ul>` : '<p>Chưa có nguồn nào được xác nhận cùng cơ hội này.</p>';
+  const decisions = review.decisions.length ? `<section class="subsection"><h3>Quyết định đã lưu</h3><ul>${review.decisions.map((decision) => { const peerId = decision.leftId === detail.id ? decision.rightId : decision.leftId; return `<li><a href="${jobHref(peerId)}">${escapeHtml(peerId)}</a> · ${opportunityRelationLabel(decision.relation)}</li>`; }).join("")}</ul><p>Có thể chọn lại đúng cặp bên dưới để sửa hoặc gỡ quyết định.</p></section>` : "";
+  const peers = (opportunity.jobIds ?? []).filter((id) => id !== detail.id).sort();
+  if (!review.canEdit) return `<section class="detail-section opportunity-review"><h2>Nhóm cơ hội</h2>${members}${decisions}<p class="warning">Dữ liệu nhóm đang ở trạng thái chỉ đọc.</p></section>`;
+  const selectedPeer = String(draft.peerId ?? "");
+  const selectedRelation = String(draft.relation ?? "same");
+  const checked = draft.confirmed === "true" && confirmationKey ? " checked" : "";
+  return `<section class="detail-section opportunity-review"><h2>Review nhóm cơ hội</h2>${members}${decisions}${review.suggestions.length ? `<p>Gợi ý để đối chiếu:</p><ul>${review.suggestions.map((hint) => `<li><a href="${jobHref(hint.jobId)}">${escapeHtml(hint.jobId)}</a> · ${hint.reasons.map((reason) => reason === "exact-content" ? "Nội dung giống hệt" : "Cùng URL nguồn").join("; ")}</li>`).join("")}</ul>` : ""}<form id="opportunity-form"><p id="opportunity-preview" class="opportunity-preview" aria-live="polite">${escapeHtml(opportunityPreview(detail.id, selectedPeer, selectedRelation, opportunity))}</p><label for="opportunity-peer">Nguồn cần so sánh</label><select id="opportunity-peer" name="peerId" required><option value=""${selectedPeer ? "" : " selected"}>Chọn một JD</option>${peers.map((id) => `<option value="${escapeHtml(id)}"${selectedPeer === id ? " selected" : ""}>${escapeHtml(id)}</option>`).join("")}</select><label for="opportunity-relation">Quyết định</label><select id="opportunity-relation" name="relation" required>${["same", "different", "defer", "clear"].map((relation) => `<option value="${relation}"${selectedRelation === relation ? " selected" : ""}>${opportunityRelationLabel(relation)}</option>`).join("")}</select><label><input type="checkbox" name="confirmed" value="true"${checked} required> Tôi đã xem đúng hai JD và xác nhận quyết định này</label><button type="submit"${peers.length ? "" : " disabled"}>Lưu quyết định nhóm</button></form></section>`;
+}
+
+function opportunityRelationLabel(relation) { return { same: "Cùng cơ hội", different: "Khác cơ hội", defer: "Để sau", clear: "Gỡ quyết định cặp này" }[relation] ?? "Chưa có quyết định"; }
+function opportunityPreview(jobId, peerId, relation, opportunity) {
+  if (!peerId) return "Chọn một JD để xem trước quyết định.";
+  const currentGroup = opportunity?.groups?.find((group) => group.jobIds?.includes(jobId))?.jobIds ?? [jobId];
+  const peerGroup = opportunity?.groups?.find((group) => group.jobIds?.includes(peerId))?.jobIds ?? [peerId];
+  return `Bạn đang xem ${jobId} và ${peerId}: ${opportunityRelationLabel(relation)}. Nhóm hiện tại: [${currentGroup.join(", ")}]; [${peerGroup.join(", ")}].`;
 }
 
 export function renderProfile(profile, editor, summary = {}) {

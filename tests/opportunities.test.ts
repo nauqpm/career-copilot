@@ -21,6 +21,15 @@ test("rejects unknown endpoints and transitive different contradictions", () => 
   ]), /different|contradiction/i);
 });
 
+test("detects transitive contradictions regardless of endpoint ordering", () => {
+  const decisions = [
+    { leftId: "job-z", rightId: "job-y", relation: "same" as const },
+    { leftId: "job-x", rightId: "job-z", relation: "same" as const },
+    { leftId: "job-x", rightId: "job-y", relation: "different" as const },
+  ];
+  assert.throws(() => deriveOpportunityGroups(["job-z", "job-y", "job-x"], decisions), /transitive contradiction/i);
+});
+
 test("defer does not connect groups and clear only removes the named pair", () => {
   const decisions: PairDecision[] = [
     { leftId: "job-a", rightId: "job-b", relation: "same" },

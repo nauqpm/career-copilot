@@ -104,7 +104,37 @@ test("browser controller loads the initial job hash with its source and note", a
   assert.match(browser.html(), /<h1[^>]*>Backend Developer<\/h1>/);
   assert.match(browser.html(), /Build reliable APIs\./);
   assert.match(browser.html(), />Initial local note<\/textarea>/);
-  assert.deepEqual(browser.requests.map((request) => request.path), ["/api/summary", "/api/jobs/job-example", "/api/jobs/job-example/note"]);
+  assert.deepEqual(browser.requests.map((request) => request.path), ["/api/summary", "/api/jobs/job-example", "/api/jobs/job-example/note", "/api/opportunities"]);
+});
+
+test("opportunity controller requires an exact confirmation before saving", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 0);
+  assert.match(browser.notice.textContent, /xác nhận quyết định hiện tại/i);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  const write = browser.requests.find((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions");
+  assert.equal(write?.options.headers?.["If-Match"], '"opportunity-original"', JSON.stringify(browser.requests));
+  assert.deepEqual(JSON.parse(write?.options.body ?? "null"), { leftId: "job-example", rightId: "job-other", relation: "same", confirmed: true });
+});
+
+test("opportunity confirmation is invalidated when the relation changes and duplicate submits are ignored", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "different", confirmed: "true" });
+  assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 0);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "different" });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  browser.beforeRequest((_path, options) => options.method === "POST" ? pending : Promise.resolve());
+  const first = browser.submit("opportunity-form", { peerId: "job-other", relation: "different", confirmed: "true" });
+  const second = browser.submit("opportunity-form", { peerId: "job-other", relation: "different", confirmed: "true" });
+  release();
+  await Promise.all([first, second]);
+  assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 1);
 });
 
 test("browser controller follows hashchange navigation and focuses the new page", async () => {
@@ -611,6 +641,12 @@ function browserFixture(initialHash: string, narrow = false) {
         const fields = Object.fromEntries([...html.matchAll(/<textarea[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/g)].map((match) => [match[1], decodeHtml(match[2])]));
         currentForm = makeForm("profile-form", fields);
       }
+      if (html.includes('id="opportunity-form"')) {
+        currentForm = makeForm("opportunity-form", {
+          peerId: decodeHtml(html.match(/<select[^>]*id="opportunity-peer"[^>]*>[\s\S]*?<option value="([^"]+)"/)?.[1] ?? ""),
+          relation: decodeHtml(html.match(/<select[^>]*id="opportunity-relation"[^>]*>[\s\S]*?<option value="([^"]+)"/)?.[1] ?? "same"),
+        });
+      }
     },
     addEventListener: (name: string, handler: Handler) => pageEvents.set(name, handler),
   };
@@ -691,6 +727,8 @@ function browserFixture(initialHash: string, narrow = false) {
         created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };
         return Response.json(created, { status: 201 });
       }
+      if (path === "/api/opportunities") return Response.json({ health: "healthy", snapshot: { pointerHash: "opportunity-original", revision: null }, groups: [{ key: "job-example", jobIds: ["job-example"] }, { key: "job-other", jobIds: ["job-other"] }], jobIds: ["job-example", "job-other"], repairJobIds: [] });
+      if (options.method === "POST" && path === "/api/opportunities/decisions") return Response.json({ health: "healthy", snapshot: { pointerHash: "opportunity-saved", revision: { decisions: [{ leftId: "job-example", rightId: "job-other", relation: JSON.parse(options.body ?? "{}").relation }] } }, groups: [{ key: "job-example", jobIds: ["job-example", "job-other"] }], jobIds: ["job-example", "job-other"], repairJobIds: [] }, { status: 201, headers: { ETag: '"opportunity-saved"' } });
       if (path === "/api/summary") return Response.json({ jobs: summaryJobs ?? [jobSummary(), ...(created ? [created] : [])], profile, profileHash, profileSourceHash: sourceHash, profileError, profileRevision: undefined, profileHistory: { revisions: [] }, unresolvedClaims: [] });
       if (path === "/api/jobs/job-example") return Response.json(detail);
       const matchedJob = path.match(/^\/api\/jobs\/([^/]+)$/);
@@ -739,6 +777,10 @@ function browserFixture(initialHash: string, narrow = false) {
     async type(id: string, fields: Record<string, string>) {
       const form = updateForm(id, fields);
       await pageEvents.get("input")?.({ target: { closest: () => form } });
+    },
+    async confirmOpportunity(fields: Record<string, string>) {
+      const form = updateForm("opportunity-form", { ...fields, confirmed: "true" });
+      await pageEvents.get("change")?.({ target: { closest: () => form, name: "confirmed", checked: true } });
     },
     submit,
     submitJob: (fields: Record<string, string>) => submit("job-form", fields),

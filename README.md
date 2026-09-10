@@ -14,6 +14,8 @@ M3.1 adds immutable local JD captures. New paste/import writes exact `source.md`
 
 M3.2 adds candidate-controlled opportunity decisions in `data/opportunities/`: “same”, “different”, “defer” and pair-only correction are stored as immutable revisions behind a hash-checked current pointer. Source folders stay independent. A contradiction or stale tab is rejected; no decision automatically submits, deletes or rewrites a JD.
 
+M3.3 adds the candidate review surface to each existing job detail route. It shows retained group members, exact-content/same-URL hints and saved pair decisions, then requires the candidate to select the peer, relation and an exact confirmation before saving against the loaded pointer hash. Repair or stale state is visible and read-only; no grouping action submits, deletes or rewrites a JD.
+
 ## Install
 
 ```bash

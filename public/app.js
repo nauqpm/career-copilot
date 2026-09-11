@@ -221,12 +221,14 @@ export function initializeBrowserApp(browser = globalThis) {
       } else if (form.id === "opportunity-form" && route.page === "job") {
         const peerId = String(values.get("peerId") ?? "");
         const relation = String(values.get("relation") ?? "");
-        const expectedHash = state.opportunity?.snapshot?.pointerHash ?? null;
+        const opportunityAtSubmit = state.opportunity;
+        const expectedHash = opportunityAtSubmit?.snapshot?.pointerHash ?? null;
         const confirmationKey = opportunityConfirmationKey(route.jobId, peerId, relation, expectedHash, state.opportunity);
         if (values.get("confirmed") !== "true" || state.opportunityConfirmationKey !== confirmationKey) throw new Error("Hãy xem đúng hai JD và xác nhận quyết định hiện tại trước khi lưu.");
         if (!peerId || !["same", "different", "defer", "clear"].includes(relation)) throw new Error("Quyết định nhóm cơ hội chưa hợp lệ.");
-        const saved = await requestJson("/api/opportunities/decisions", { method: "POST", headers: matchHeader(expectedHash === null ? '"missing"' : `"${expectedHash}"`), body: JSON.stringify({ leftId: route.jobId, rightId: peerId, relation, confirmed: true }) }, (hash) => { state = { ...state, opportunity: { ...(state.opportunity ?? {}), snapshot: { ...(state.opportunity?.snapshot ?? {}), pointerHash: hash ? hash.slice(1, -1) : null } } }; });
-        if (state.route.page === "job" && state.route.jobId === route.jobId) { state = { ...state, opportunity: saved, opportunityDraft: {}, opportunityConfirmationKey: undefined }; showNotice("Đã lưu quyết định nhóm cơ hội trên máy."); render(); }
+        const saved = await requestJson("/api/opportunities/decisions", { method: "POST", headers: matchHeader(expectedHash === null ? '"missing"' : `"${expectedHash}"`), body: JSON.stringify({ leftId: route.jobId, rightId: peerId, relation, confirmed: true }) });
+        const sameOpportunityContext = form.isConnected && state.route.page === "job" && state.route.jobId === route.jobId && JSON.stringify(state.opportunity) === JSON.stringify(opportunityAtSubmit);
+        if (sameOpportunityContext) { state = { ...state, opportunity: saved, opportunityDraft: {}, opportunityConfirmationKey: undefined }; showNotice("Đã lưu quyết định nhóm cơ hội trên máy."); render(); }
       } else if (form.id === "profile-form") {
         if (state.summary.profileError) throw new Error("Hồ sơ đang lỗi. Hãy khôi phục dữ liệu và tải lại trước khi chỉnh sửa.");
         rememberProfileDraft(form);
@@ -267,7 +269,8 @@ export function initializeBrowserApp(browser = globalThis) {
       const sameNote = form.id === "note-form" && state.route.page === "job" && state.route.jobId === route.jobId;
       const sameProfile = ["profile-form", "profile-source-form"].includes(form.id) && state.route.page === "profile";
       if (form.isConnected || sameNote || sameProfile || form.id === "opportunity-form") showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
-      if (form.id === "opportunity-form") {
+      const sameOpportunityForm = form.id === "opportunity-form" && route.page === "job" && state.route.page === "job" && state.route.jobId === route.jobId && form.isConnected;
+      if (sameOpportunityForm) {
         state = { ...state, opportunityConfirmationKey: undefined };
         clearOpportunityConfirmation(form);
       }

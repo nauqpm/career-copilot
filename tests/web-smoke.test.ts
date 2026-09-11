@@ -184,6 +184,51 @@ test("failed opportunity writes clear the live confirmation while preserving the
   assert.doesNotMatch(browser.html(), /name="confirmed"[^>]*checked/);
 });
 
+test("a delayed opportunity save cannot overwrite another job's pointer", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  browser.setJobDetails({ "job-other": { ...populatedFixture(), id: "job-other", title: "Other role", sourcePreview: "Other role" } });
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  browser.beforeRequest((_path, options) => options.method === "POST" ? saveGate : Promise.resolve());
+  const saving = browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  await browser.navigate("#jobs/job-other");
+  releaseSave();
+  await saving;
+
+  await browser.confirmOpportunity({ peerId: "job-example", relation: "same" });
+  await browser.submit("opportunity-form", { peerId: "job-example", relation: "same", confirmed: "true" });
+  const writes = browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions");
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1]?.options.headers?.["If-Match"], '"opportunity-original"');
+});
+
+test("a failed opportunity save cannot clear another job's confirmation", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  browser.setJobDetails({ "job-other": { ...populatedFixture(), id: "job-other", title: "Other role", sourcePreview: "Other role" } });
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  browser.beforeRequest((_path, options) => options.method === "POST" ? saveGate : Promise.resolve());
+  const saving = browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  await browser.navigate("#jobs/job-other");
+  await browser.confirmOpportunity({ peerId: "job-example", relation: "same" });
+  assert.equal(browser.opportunityConfirmationChecked(), true);
+
+  browser.failNext(409);
+  releaseSave();
+  await saving;
+  assert.equal(browser.opportunityConfirmationChecked(), true);
+  await browser.submit("opportunity-form", { peerId: "job-example", relation: "same", confirmed: "true" });
+  const writes = browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions");
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1]?.options.headers?.["If-Match"], '"opportunity-original"');
+});
+
 test("browser controller follows hashchange navigation and focuses the new page", async () => {
   const browser = browserFixture("#jobs/job-example");
   await initializeBrowserApp(browser.environment);
@@ -777,6 +822,8 @@ function browserFixture(initialHash: string, narrow = false) {
         noteHash = "note-saved";
         return Response.json({ content: note }, { headers: { ETag: `"${noteHash}"` } });
       }
+      const matchedNote = path.match(/^\/api\/jobs\/([^/]+)\/note$/);
+      if (matchedNote && options.method !== "PUT") return Response.json({ content: noteAtRequestStart }, { headers: { ETag: `"${noteHashAtRequestStart}"` } });
       if (options.method === "POST" && path === "/api/jobs") {
         const input = JSON.parse(options.body ?? "null");
         created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };

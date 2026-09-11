@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+import { captureRawSource, createJobCapture } from "../src/job/capture.js";
 import { createLocalJob, readWorkspaceJob } from "../src/workspace/storage.js";
 import { runCli, type CliIo } from "../src/cli.js";
 
@@ -18,6 +19,15 @@ test("local job capture preserves exact source bytes and trims only raw content"
   assert.equal(raw.capture.id, job.id);
   assert.equal(job.captureStatus, "verified");
   assert.equal((await readWorkspaceJob(root, job.id)).capture?.sourceReference, "Pasted source");
+});
+
+test("normalizes a local filename before writing raw source metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-capture-"));
+  const job = await createLocalJob(root, { content: "Role", sourceKind: "local-file", sourceFileName: " role.md " });
+  const raw = JSON.parse(await readFile(join(root, "data", "jobs", job.id, "raw.json"), "utf8"));
+
+  assert.deepEqual(raw.source, { type: "file", value: "role.md" });
+  assert.equal((await readWorkspaceJob(root, job.id)).captureStatus, "verified");
 });
 
 test("capture rejects empty and oversized input before creating a job", async () => {
@@ -37,6 +47,61 @@ test("capture parser rejects tampered manifest fields", async () => {
   const detail = await readWorkspaceJob(root, job.id);
   assert.equal(detail.captureStatus, "invalid");
   assert.match(detail.invalidSourceData ?? "", /nguồn JD|capture/i);
+});
+
+test("maps a verified capture to the raw source metadata written by storage", () => {
+  const pasted = createJobCapture("job-pasted", { content: "Role", sourceKind: "pasted-text" }, "2026-09-11T00:00:00.000Z");
+  assert.deepEqual(captureRawSource(pasted), { type: "text", value: "Pasted in Career Copilot" });
+
+  const local = createJobCapture("job-local", { content: "Role", sourceKind: "local-file", sourceFileName: "role.md" }, "2026-09-11T00:00:00.000Z");
+  assert.deepEqual(captureRawSource(local), { type: "file", value: "role.md" });
+
+  const referenced = createJobCapture("job-referenced", { content: "Role", sourceKind: "local-file", sourceReference: "Company export", sourceFileName: "role.md" }, "2026-09-11T00:00:00.000Z");
+  assert.deepEqual(captureRawSource(referenced), { type: "file", value: "Company export" });
+});
+
+test("marks a capture invalid when raw source metadata no longer matches its manifest", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-capture-"));
+  const job = await createLocalJob(root, {
+    content: "Backend role",
+    sourceKind: "pasted-text",
+    sourceReference: "https://jobs.example.test/original",
+  });
+  const rawPath = join(root, "data", "jobs", job.id, "raw.json");
+  const raw = JSON.parse(await readFile(rawPath, "utf8"));
+  raw.source.value = "https://jobs.example.test/forged";
+  await writeFile(rawPath, `${JSON.stringify(raw)}\n`, "utf8");
+
+  const detail = await readWorkspaceJob(root, job.id);
+  assert.equal(detail.captureStatus, "invalid");
+  assert.deepEqual(detail.duplicateHints, []);
+  assert.equal(detail.duplicateScanIncomplete, false);
+});
+
+test("skips a damaged duplicate candidate and marks the scan incomplete", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-capture-"));
+  const first = await createLocalJob(root, { content: "Same role", sourceKind: "pasted-text" });
+  const second = await createLocalJob(root, { content: "Same role", sourceKind: "pasted-text" });
+  await writeFile(join(root, "data", "jobs", second.id, "source.md"), "Different bytes", "utf8");
+
+  const detail = await readWorkspaceJob(root, first.id);
+  assert.deepEqual(detail.duplicateHints, []);
+  assert.equal(detail.duplicateScanIncomplete, true);
+});
+
+test("marks a Windows junction job as an incomplete duplicate scan without following it", async () => {
+  if (process.platform !== "win32") return;
+
+  const root = await mkdtemp(join(tmpdir(), "career-capture-"));
+  const first = await createLocalJob(root, { content: "Same role", sourceKind: "pasted-text" });
+  const target = await mkdtemp(join(tmpdir(), "career-capture-junction-target-"));
+  await writeFile(join(target, "source.md"), "Same role", "utf8");
+  await writeFile(join(target, "raw.json"), `${JSON.stringify({ content: "Same role", source: { type: "text", value: "Pasted in Career Copilot" } })}\n`, "utf8");
+  await symlink(target, join(root, "data", "jobs", "job-damaged"), "junction");
+
+  const detail = await readWorkspaceJob(root, first.id);
+  assert.deepEqual(detail.duplicateHints, []);
+  assert.equal(detail.duplicateScanIncomplete, true);
 });
 
 test("CLI imports one UTF-8 text file without invoking URL resolution", async () => {

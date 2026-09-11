@@ -46,6 +46,13 @@ export function createJobCapture(id: string, input: LocalJobInput, createdAt = n
   return { ...capture, contentHash: hashManifest(capture) };
 }
 
+export function captureRawSource(capture: JobCapture): { type: "text" | "file"; value: string } {
+  if (capture.sourceKind === "local-file") {
+    return { type: "file", value: capture.sourceReference ?? capture.sourceFileName ?? "Imported local file" };
+  }
+  return { type: "text", value: capture.sourceReference ?? "Pasted in Career Copilot" };
+}
+
 export function parseJobCapture(value: unknown): JobCapture {
   if (!isRecord(value) || value.schemaVersion !== 1 || !isSafeId(value.id) || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt))) {
     throw new Error("Job capture manifest is invalid");

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assertSafePath, readArtifact, writeArtifact } from "./artifacts.js";
-import { createJobCapture, maxCaptureBytes, parseJobCapture, serializeJobCapture, type JobCapture, type LocalJobInput } from "../job/capture.js";
+import { captureRawSource, createJobCapture, maxCaptureBytes, parseJobCapture, serializeJobCapture, type JobCapture, type LocalJobInput } from "../job/capture.js";
 import { findExactDuplicateHints, type DuplicateCandidate, type DuplicateHint } from "../job/duplicates.js";
 
 import { type JobDecision, parseJobDecision } from "../decision/schema.js";
@@ -68,16 +68,12 @@ export async function createPastedJob(root: string, input: PastedJob): Promise<W
 
 export async function createLocalJob(root: string, input: LocalJobInput): Promise<WorkspaceJobSummary> {
   const content = requireCaptureText(input.content);
-  const sourceReference = input.sourceReference?.trim();
   const id = `job-${randomUUID()}`;
   const directory = jobDirectory(root, id);
   const capture = createJobCapture(id, input);
   const raw: WorkspaceRawJobContent = {
     content: content.trim(),
-    source: {
-      type: input.sourceKind === "local-file" ? "file" : "text",
-      value: sourceReference || input.sourceFileName || (input.sourceKind === "local-file" ? "Imported local file" : "Pasted in Career Copilot"),
-    },
+    source: captureRawSource(capture),
     capture: { id, manifestHash: "" },
   };
 
@@ -239,16 +235,32 @@ async function readCaptureState(directory: string, id: string, raw: WorkspaceRaw
   try {
     if (manifest === undefined || raw.capture === undefined || raw.capture.id !== id || raw.capture.manifestHash !== manifest.hash) throw new Error("Capture reference is missing or inconsistent");
     const capture = parseJobCapture(JSON.parse(manifest.content) as unknown);
-    if (capture.id !== id || source === undefined || source.hash !== capture.rawContentHash || raw.content !== source.content.trim()) throw new Error("Captured source bytes do not match their manifest");
+    const expectedSource = captureRawSource(capture);
+    if (
+      capture.id !== id ||
+      source === undefined ||
+      source.hash !== capture.rawContentHash ||
+      raw.content !== source.content.trim() ||
+      raw.source.type !== expectedSource.type ||
+      raw.source.value !== expectedSource.value
+    ) {
+      throw new Error("Captured source metadata does not match its manifest");
+    }
     return { capture, captureStatus: "verified", captureCreatedAt: capture.createdAt, sourceHash: source.hash };
   } catch {
     return { captureStatus: "invalid", invalidSourceData: "Nguồn JD capture bị thiếu hoặc không toàn vẹn. Dữ liệu gốc được giữ nguyên; hãy khôi phục source.md, source.json và raw.json cùng nhau." };
   }
 }
 
-async function readDuplicateState(root: string, currentId: string, raw: WorkspaceRawJobContent, captureState: { captureStatus: "verified" | "legacy" | "invalid"; sourceHash?: string }): Promise<{ duplicateHints: DuplicateHint[]; duplicateScanIncomplete: boolean }> {
+async function readDuplicateState(root: string, currentId: string, raw: WorkspaceRawJobContent, captureState: { capture?: JobCapture; captureStatus: "verified" | "legacy" | "invalid"; sourceHash?: string }): Promise<{ duplicateHints: DuplicateHint[]; duplicateScanIncomplete: boolean }> {
   if (captureState.captureStatus === "invalid" || captureState.sourceHash === undefined) return { duplicateHints: [], duplicateScanIncomplete: false };
-  const candidates: DuplicateCandidate[] = [{ jobId: currentId, sourceHash: captureState.sourceHash, sourceReference: raw.source.value }];
+  const candidates: DuplicateCandidate[] = [{
+    jobId: currentId,
+    sourceHash: captureState.sourceHash,
+    ...(captureState.capture?.sourceReference === undefined
+      ? captureState.captureStatus === "legacy" ? { sourceReference: raw.source.value } : {}
+      : { sourceReference: captureState.capture.sourceReference }),
+  }];
   let incomplete = false;
   let entries;
   try {
@@ -257,12 +269,25 @@ async function readDuplicateState(root: string, currentId: string, raw: Workspac
     return { duplicateHints: [], duplicateScanIncomplete: true };
   }
   for (const entry of entries) {
-    if (!entry.isDirectory() || !jobIdPattern.test(entry.name) || entry.name === currentId) continue;
+    if (!jobIdPattern.test(entry.name) || entry.name === currentId) continue;
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      incomplete = true;
+      continue;
+    }
     try {
       const otherRaw = parseRawJobContent(await readJson(join(jobsDirectory(root), entry.name, "raw.json")));
-      const source = await readArtifact(join(jobsDirectory(root), entry.name, "source.md"));
-      if (source === undefined) { incomplete = true; continue; }
-      candidates.push({ jobId: entry.name, sourceHash: source.hash, sourceReference: otherRaw.source.value });
+      const otherState = await readCaptureState(join(jobsDirectory(root), entry.name), entry.name, otherRaw);
+      if (otherState.captureStatus === "invalid" || otherState.sourceHash === undefined) {
+        incomplete = true;
+        continue;
+      }
+      candidates.push({
+        jobId: entry.name,
+        sourceHash: otherState.sourceHash,
+        ...(otherState.capture?.sourceReference === undefined
+          ? otherState.captureStatus === "legacy" ? { sourceReference: otherRaw.source.value } : {}
+          : { sourceReference: otherState.capture.sourceReference }),
+      });
     } catch {
       incomplete = true;
     }

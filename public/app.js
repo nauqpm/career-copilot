@@ -179,8 +179,8 @@ export function initializeBrowserApp(browser = globalThis) {
     const form = event.target;
     if (!["job-form", "note-form", "profile-source-form", "profile-form", "opportunity-form"].includes(form.id)) return;
     event.preventDefault();
-    if (savingForms.includes(form.id) || state.loading) return;
-    savingForms = [...savingForms, form.id];
+    if (savingForms.includes(form) || state.loading) return;
+    savingForms = [...savingForms, form];
     if (form.id === "opportunity-form") state = { ...state, opportunityDraft: Object.fromEntries(new FormData(form).entries()) };
     else rememberDraft(form);
     const button = form.querySelector('button[type="submit"]');
@@ -268,8 +268,9 @@ export function initializeBrowserApp(browser = globalThis) {
     } catch (error) {
       const sameNote = form.id === "note-form" && state.route.page === "job" && state.route.jobId === route.jobId;
       const sameProfile = ["profile-form", "profile-source-form"].includes(form.id) && state.route.page === "profile";
-      if (form.isConnected || sameNote || sameProfile || form.id === "opportunity-form") showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
       const sameOpportunityForm = form.id === "opportunity-form" && route.page === "job" && state.route.page === "job" && state.route.jobId === route.jobId && form.isConnected;
+      const shouldShowError = form.id === "opportunity-form" ? sameOpportunityForm : form.isConnected || sameNote || sameProfile;
+      if (shouldShowError) showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
       if (sameOpportunityForm) {
         state = { ...state, opportunityConfirmationKey: undefined };
         clearOpportunityConfirmation(form);
@@ -283,7 +284,7 @@ export function initializeBrowserApp(browser = globalThis) {
         if (currentForm?.id === "profile-form") currentForm.querySelector("fieldset").disabled = false;
       }
       button.disabled = false;
-      savingForms = savingForms.filter((id) => id !== form.id);
+      savingForms = savingForms.filter((savingForm) => savingForm !== form);
     }
   });
 

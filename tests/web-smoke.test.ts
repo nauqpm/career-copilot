@@ -229,6 +229,52 @@ test("a failed opportunity save cannot clear another job's confirmation", async 
   assert.equal(writes[1]?.options.headers?.["If-Match"], '"opportunity-original"');
 });
 
+test("a failed opportunity save cannot overwrite a replacement route notice", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  browser.setJobDetails({ "job-other": { ...populatedFixture(), id: "job-other", title: "Other role", sourcePreview: "Other role" } });
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  browser.beforeRequest((_path, options) => {
+    if (options.method !== "POST") return Promise.resolve();
+    return JSON.parse(options.body ?? "{}").leftId === "job-example" ? saveGate : Promise.resolve();
+  });
+  const saving = browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  await browser.navigate("#jobs/job-other");
+  browser.notice.textContent = "Thông báo hiện tại của job B";
+  browser.failNext(409);
+  releaseSave();
+  await saving;
+
+  assert.equal(browser.notice.textContent, "Thông báo hiện tại của job B");
+});
+
+test("a replacement opportunity form can submit while an earlier save is pending", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  browser.setJobDetails({ "job-other": { ...populatedFixture(), id: "job-other", title: "Other role", sourcePreview: "Other role" } });
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  browser.beforeRequest((_path, options) => {
+    if (options.method !== "POST") return Promise.resolve();
+    return JSON.parse(options.body ?? "{}").leftId === "job-example" ? saveGate : Promise.resolve();
+  });
+  const saving = browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  await browser.navigate("#jobs/job-other");
+  await browser.confirmOpportunity({ peerId: "job-example", relation: "same" });
+  await browser.submit("opportunity-form", { peerId: "job-example", relation: "same", confirmed: "true" });
+
+  const writesBeforeRelease = browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions");
+  releaseSave();
+  await saving;
+  assert.equal(writesBeforeRelease.length, 2);
+  assert.equal(JSON.parse(writesBeforeRelease[1]?.options.body ?? "null").leftId, "job-other");
+});
+
 test("browser controller follows hashchange navigation and focuses the new page", async () => {
   const browser = browserFixture("#jobs/job-example");
   await initializeBrowserApp(browser.environment);

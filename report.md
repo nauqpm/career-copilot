@@ -14,9 +14,9 @@ Implemented the bounded M3 closeout on branch `feature/opportunity-review` (fork
 
 Fresh checks on this branch:
 
-- `npm test` — passed, 194 tests passed, 0 failed (run with the approved external Windows environment after the sandbox-only `EPERM` failure).
-- Explicit complete suite with `node --test --test-concurrency=1 --import tsx …` — passed, 194 tests passed, 0 failed.
-- `node --test --test-concurrency=1 --experimental-test-coverage --import tsx …` — passed, 194 tests passed, 0 failed; all-files coverage: 96.10% lines, 87.92% branches, 96.56% functions.
+- `npm test` — passed, 203 tests passed, 0 failed (run with the approved external Windows environment after the sandbox-only `EPERM` failure).
+- Explicit complete suite with `node --test --test-concurrency=1 --import tsx …` — passed, 203 tests passed, 0 failed.
+- `node --test --test-concurrency=1 --experimental-test-coverage --import tsx …` — passed, 203 tests passed, 0 failed; all-files coverage: 96.10% lines, 87.92% branches, 96.56% functions.
 - Changed runtime coverage: `public/app.js` 99.09% lines / 85.48% branches, `public/render.js` 100.00% / 86.70%, `src/job/opportunities.ts` 84.62% / 84.85%, `src/workspace/opportunities.ts` 99.12% / 89.04%.
 - `npm run build` — passed.
 - `pnpm audit --audit-level=high` — passed; no known vulnerabilities found.

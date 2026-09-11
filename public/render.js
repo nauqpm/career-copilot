@@ -90,7 +90,13 @@ export function selectOpportunityReview(jobId, duplicateHints = [], opportunity 
   const memberIds = (group?.jobIds ?? []).filter((id) => id !== jobId);
   const pairDecision = (peerId) => decisions.find((decision) => decision.leftId === [jobId, peerId].sort()[0] && decision.rightId === [jobId, peerId].sort()[1]);
   const suggestions = duplicateHints.filter((hint) => !memberIds.includes(hint.jobId) && pairDecision(hint.jobId) === undefined);
-  return { memberIds, suggestions, decisions: decisions.filter((decision) => decision.leftId === jobId || decision.rightId === jobId), canEdit: opportunity.health === "healthy" && opportunity.snapshot !== null && opportunity.snapshot !== undefined };
+  const repairIds = new Set(opportunity.repairJobIds ?? []);
+  return {
+    memberIds,
+    suggestions,
+    decisions: decisions.filter((decision) => decision.leftId === jobId || decision.rightId === jobId),
+    canEdit: opportunity.health === "healthy" && opportunity.snapshot !== null && opportunity.snapshot !== undefined && !repairIds.has(jobId),
+  };
 }
 
 function renderOpportunityReview(detail, opportunity, draft = {}, confirmationKey) {
@@ -99,12 +105,18 @@ function renderOpportunityReview(detail, opportunity, draft = {}, confirmationKe
   const review = selectOpportunityReview(detail.id, detail.duplicateHints ?? [], opportunity);
   const members = review.memberIds.length ? `<p>Các nguồn đã được bạn xác nhận là cùng cơ hội:</p><ul>${review.memberIds.map((id) => `<li><a href="${jobHref(id)}">${escapeHtml(id)}</a></li>`).join("")}</ul>` : '<p>Chưa có nguồn nào được xác nhận cùng cơ hội này.</p>';
   const decisions = review.decisions.length ? `<section class="subsection"><h3>Quyết định đã lưu</h3><ul>${review.decisions.map((decision) => { const peerId = decision.leftId === detail.id ? decision.rightId : decision.leftId; return `<li><a href="${jobHref(peerId)}">${escapeHtml(peerId)}</a> · ${opportunityRelationLabel(decision.relation)}</li>`; }).join("")}</ul><p>Có thể chọn lại đúng cặp bên dưới để sửa hoặc gỡ quyết định.</p></section>` : "";
-  const peers = (opportunity.jobIds ?? []).filter((id) => id !== detail.id).sort();
-  if (!review.canEdit) return `<section class="detail-section opportunity-review"><h2>Nhóm cơ hội</h2>${members}${decisions}<p class="warning">Dữ liệu nhóm đang ở trạng thái chỉ đọc.</p></section>`;
+  const repairIds = new Set(opportunity.repairJobIds ?? []);
+  const peers = (opportunity.jobIds ?? []).filter((id) => id !== detail.id && !repairIds.has(id)).sort();
+  const repairPeers = (opportunity.jobIds ?? []).filter((id) => id !== detail.id && repairIds.has(id)).sort();
+  const repairWarning = repairPeers.length ? `<p class="warning">Một số JD đang cần khôi phục nên không thể chọn để liên kết: ${repairPeers.map((id) => escapeHtml(id)).join(", ")}</p>` : "";
+  if (!review.canEdit) {
+    const warning = repairIds.has(detail.id) ? "JD hiện tại đang cần khôi phục; nhóm cơ hội đang ở trạng thái chỉ đọc." : "Dữ liệu nhóm đang ở trạng thái chỉ đọc.";
+    return `<section class="detail-section opportunity-review"><h2>Nhóm cơ hội</h2>${members}${decisions}<p class="warning">${warning}</p></section>`;
+  }
   const selectedPeer = String(draft.peerId ?? "");
   const selectedRelation = String(draft.relation ?? "same");
   const checked = draft.confirmed === "true" && confirmationKey ? " checked" : "";
-  return `<section class="detail-section opportunity-review"><h2>Review nhóm cơ hội</h2>${members}${decisions}${review.suggestions.length ? `<p>Gợi ý để đối chiếu:</p><ul>${review.suggestions.map((hint) => `<li><a href="${jobHref(hint.jobId)}">${escapeHtml(hint.jobId)}</a> · ${hint.reasons.map((reason) => reason === "exact-content" ? "Nội dung giống hệt" : "Cùng URL nguồn").join("; ")}</li>`).join("")}</ul>` : ""}<form id="opportunity-form"><p id="opportunity-preview" class="opportunity-preview" aria-live="polite">${escapeHtml(opportunityPreview(detail.id, selectedPeer, selectedRelation, opportunity))}</p><label for="opportunity-peer">Nguồn cần so sánh</label><select id="opportunity-peer" name="peerId" required><option value=""${selectedPeer ? "" : " selected"}>Chọn một JD</option>${peers.map((id) => `<option value="${escapeHtml(id)}"${selectedPeer === id ? " selected" : ""}>${escapeHtml(id)}</option>`).join("")}</select><label for="opportunity-relation">Quyết định</label><select id="opportunity-relation" name="relation" required>${["same", "different", "defer", "clear"].map((relation) => `<option value="${relation}"${selectedRelation === relation ? " selected" : ""}>${opportunityRelationLabel(relation)}</option>`).join("")}</select><label><input type="checkbox" name="confirmed" value="true"${checked} required> Tôi đã xem đúng hai JD và xác nhận quyết định này</label><button type="submit"${peers.length ? "" : " disabled"}>Lưu quyết định nhóm</button></form></section>`;
+  return `<section class="detail-section opportunity-review"><h2>Review nhóm cơ hội</h2>${members}${decisions}${repairWarning}${review.suggestions.length ? `<p>Gợi ý để đối chiếu:</p><ul>${review.suggestions.map((hint) => `<li><a href="${jobHref(hint.jobId)}">${escapeHtml(hint.jobId)}</a> · ${hint.reasons.map((reason) => reason === "exact-content" ? "Nội dung giống hệt" : "Cùng URL nguồn").join("; ")}</li>`).join("")}</ul>` : ""}<form id="opportunity-form"><p id="opportunity-preview" class="opportunity-preview" aria-live="polite">${escapeHtml(opportunityPreview(detail.id, selectedPeer, selectedRelation, opportunity))}</p><label for="opportunity-peer">Nguồn cần so sánh</label><select id="opportunity-peer" name="peerId" required><option value=""${selectedPeer ? "" : " selected"}>Chọn một JD</option>${peers.map((id) => `<option value="${escapeHtml(id)}"${selectedPeer === id ? " selected" : ""}>${escapeHtml(id)}</option>`).join("")}</select><label for="opportunity-relation">Quyết định</label><select id="opportunity-relation" name="relation" required>${["same", "different", "defer", "clear"].map((relation) => `<option value="${relation}"${selectedRelation === relation ? " selected" : ""}>${opportunityRelationLabel(relation)}</option>`).join("")}</select><label><input type="checkbox" name="confirmed" value="true"${checked} required> Tôi đã xem đúng hai JD và xác nhận quyết định này</label><button type="submit"${peers.length ? "" : " disabled"}>Lưu quyết định nhóm</button></form></section>`;
 }
 
 function opportunityRelationLabel(relation) { return { same: "Cùng cơ hội", different: "Khác cơ hội", defer: "Để sau", clear: "Gỡ quyết định cặp này" }[relation] ?? "Chưa có quyết định"; }

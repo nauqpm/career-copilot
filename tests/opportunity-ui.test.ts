@@ -57,3 +57,14 @@ test("does not offer a repair peer as an editable opportunity choice", () => {
   assert.doesNotMatch(html, /value="job-bad"/);
   assert.match(html, /khôi phục|repair/i);
 });
+
+test("makes a current repair job read-only", () => {
+  const html = renderJobDetail(
+    { id: "job-bad", title: "Role", sourcePreview: "Role", updatedAt: "2026-09-11T00:00:00.000Z", raw: { content: "Role", source: { value: "Local" } }, artifactStatus: { source: false, analysis: false, decision: false, cvDraft: false }, hasAnalysis: false, hasCvDraft: false, captureStatus: "invalid", invalidSourceData: "repair" },
+    "",
+    { health: "healthy", snapshot: { pointerHash: "sha256:" + "1".repeat(64), revision: null }, groups: [{ key: "job-bad", jobIds: ["job-bad"] }, { key: "job-good", jobIds: ["job-good"] }], jobIds: ["job-bad", "job-good"], repairJobIds: ["job-bad"] },
+  );
+
+  assert.match(html, /chỉ đọc|read-only/i);
+  assert.doesNotMatch(html, /id="opportunity-form"/);
+});

@@ -2,7 +2,7 @@
 
 ## Scope
 
-Implemented the bounded M3 closeout on branch `feature/opportunity-review` (forked from local `main` and carrying the M3.1/M3.2 dependency commits).
+Implemented the bounded M3 closeout on branch `feature/opportunity-review-ux` (forked from local `main` and carrying the M3.1/M3.2 dependency commits).
 
 - The existing job detail page now shows retained opportunity-group members, exact-content and same-URL advisory hints, and saved pair decisions.
 - Candidate decisions use a native peer/relation form (`same`, `different`, `defer`, `clear`) with an exact preview and explicit confirmation.

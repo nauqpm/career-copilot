@@ -148,6 +148,42 @@ test("unchanged opportunity polling preserves a checked confirmation", async () 
   assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 1);
 });
 
+test("opportunity input changes clear the live confirmation while preserving the draft", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+  assert.equal(browser.opportunityConfirmationChecked(), true);
+
+  await browser.changeOpportunity("relation", "different");
+  assert.equal(browser.opportunityConfirmationChecked(), false);
+
+  await browser.refresh();
+  assert.match(browser.html(), /value="job-other" selected/);
+  assert.match(browser.html(), /value="different" selected/);
+  assert.doesNotMatch(browser.html(), /name="confirmed"[^>]*checked/);
+});
+
+test("failed opportunity writes clear the live confirmation while preserving the draft", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+
+  browser.failNext(409);
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  assert.equal(browser.opportunityConfirmationChecked(), false);
+
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+  browser.beforeRequest((path, options) => options.method === "POST" ? Promise.reject(new Error("offline")) : Promise.resolve());
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  assert.equal(browser.opportunityConfirmationChecked(), false);
+
+  browser.beforeRequest(undefined);
+  await browser.refresh();
+  assert.match(browser.html(), /value="job-other" selected/);
+  assert.match(browser.html(), /value="same" selected/);
+  assert.doesNotMatch(browser.html(), /name="confirmed"[^>]*checked/);
+});
+
 test("browser controller follows hashchange navigation and focuses the new page", async () => {
   const browser = browserFixture("#jobs/job-example");
   await initializeBrowserApp(browser.environment);
@@ -653,10 +689,12 @@ function browserFixture(initialHash: string, narrow = false) {
         currentForm = makeForm("profile-form", fields);
       }
       if (html.includes('id="opportunity-form"')) {
-        currentForm = makeForm("opportunity-form", {
+        const opportunityForm = makeForm("opportunity-form", {
           peerId: decodeHtml(html.match(/<select[^>]*id="opportunity-peer"[^>]*>[\s\S]*?<option value="([^"]+)"/)?.[1] ?? ""),
           relation: decodeHtml(html.match(/<select[^>]*id="opportunity-relation"[^>]*>[\s\S]*?<option value="([^"]+)"/)?.[1] ?? "same"),
         });
+        opportunityForm.confirmation.checked = /name="confirmed"[^>]*checked/.test(html);
+        currentForm = opportunityForm;
       }
     },
     addEventListener: (name: string, handler: Handler) => pageEvents.set(name, handler),
@@ -711,7 +749,13 @@ function browserFixture(initialHash: string, narrow = false) {
     },
     FormData: class {
       fields: Record<string, string | File>;
-      constructor(form: { fields: Record<string, string | File> }) { this.fields = { ...form.fields }; }
+      constructor(form: { id?: string; fields: Record<string, string | File>; confirmation?: { checked: boolean } }) {
+        this.fields = { ...form.fields };
+        if (form.id === "opportunity-form") {
+          if (form.confirmation?.checked) this.fields.confirmed = "true";
+          else delete this.fields.confirmed;
+        }
+      }
       get(name: string) { return this.fields[name] ?? null; }
       entries() { return Object.entries(this.fields)[Symbol.iterator](); }
     },
@@ -751,12 +795,24 @@ function browserFixture(initialHash: string, narrow = false) {
     },
   };
   function makeForm(id: string, fields: Record<string, string | File>) {
-    const form = { id, fields, get isConnected() { return currentForm === form; }, querySelector: () => ({ disabled: false }) };
+    const form: any = {
+      id,
+      fields,
+      confirmation: { checked: id === "opportunity-form" && fields.confirmed === "true" },
+      get isConnected() { return currentForm === form; },
+      querySelector(selector: string) {
+        if (id === "opportunity-form" && selector === 'input[name="confirmed"]') return form.confirmation;
+        return { disabled: false };
+      },
+    };
     return form;
   }
   function updateForm(id: string, fields?: Record<string, string | File>) {
     if (currentForm?.id !== id) currentForm = makeForm(id, fields ?? {});
-    else if (fields) currentForm.fields = { ...fields };
+    else if (fields) {
+      currentForm.fields = { ...fields };
+      if (id === "opportunity-form" && Object.hasOwn(fields, "confirmed")) currentForm.confirmation.checked = fields.confirmed === "true";
+    }
     return currentForm;
   }
   async function submit(id: string, fields?: Record<string, string | File>) {
@@ -791,8 +847,15 @@ function browserFixture(initialHash: string, narrow = false) {
     },
     async confirmOpportunity(fields: Record<string, string>) {
       const form = updateForm("opportunity-form", { ...fields, confirmed: "true" });
+      form.confirmation.checked = true;
       await pageEvents.get("change")?.({ target: { closest: () => form, name: "confirmed", checked: true } });
     },
+    async changeOpportunity(name: "peerId" | "relation", value: string) {
+      const form = updateForm("opportunity-form");
+      form.fields = { ...form.fields, [name]: value };
+      await pageEvents.get("change")?.({ target: { closest: () => form, name, checked: false } });
+    },
+    opportunityConfirmationChecked: () => currentForm?.confirmation?.checked ?? false,
     submit,
     submitJob: (fields: Record<string, string>) => submit("job-form", fields),
   };

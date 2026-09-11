@@ -111,12 +111,12 @@ export function initializeBrowserApp(browser = globalThis) {
 
   app.addEventListener("input", (event) => {
     const form = event.target.closest("form");
-    rememberDraft(form);
+    rememberDraft(form, event.target.name === "confirmed");
   });
   app.addEventListener("change", (event) => {
     const form = typeof event.target.closest === "function" ? event.target.closest("form") : undefined;
     if (form?.id === "opportunity-form") {
-      rememberDraft(form);
+      rememberDraft(form, event.target.name === "confirmed");
       updateOpportunityPreview(form);
       if (event.target.name === "confirmed" && event.target.checked) {
         const values = new FormData(form);
@@ -136,11 +136,12 @@ export function initializeBrowserApp(browser = globalThis) {
     toggle.focus();
   });
 
-  function rememberDraft(form) {
+  function rememberDraft(form, preserveOpportunityConfirmation = false) {
     if (form?.id === "profile-form") return rememberProfileDraft(form);
     if (form?.id === "job-form") state = { ...state, jobDraft: Object.fromEntries(new FormData(form).entries()) };
     if (form?.id === "opportunity-form") {
       state = { ...state, opportunityDraft: Object.fromEntries(new FormData(form).entries()), opportunityConfirmationKey: undefined };
+      if (!preserveOpportunityConfirmation) clearOpportunityConfirmation(form);
     }
     if (form?.id === "note-form" && state.route.page === "job") {
       if (!Object.hasOwn(noteBases, state.route.jobId)) noteBases = { ...noteBases, [state.route.jobId]: noteHashes[state.route.jobId] };
@@ -266,7 +267,10 @@ export function initializeBrowserApp(browser = globalThis) {
       const sameNote = form.id === "note-form" && state.route.page === "job" && state.route.jobId === route.jobId;
       const sameProfile = ["profile-form", "profile-source-form"].includes(form.id) && state.route.page === "profile";
       if (form.isConnected || sameNote || sameProfile || form.id === "opportunity-form") showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
-      if (form.id === "opportunity-form") state = { ...state, opportunityConfirmationKey: undefined };
+      if (form.id === "opportunity-form") {
+        state = { ...state, opportunityConfirmationKey: undefined };
+        clearOpportunityConfirmation(form);
+      }
     } finally {
       if (form.id === "profile-form") {
         profileSaving = false;
@@ -286,6 +290,12 @@ export function initializeBrowserApp(browser = globalThis) {
     notice.textContent = message;
     notice.className = `notice${isError ? " error" : ""}`;
     notice.setAttribute("role", isError ? "alert" : "status");
+  }
+
+  function clearOpportunityConfirmation(form) {
+    const targetForm = form?.isConnected === false ? document.querySelector("#opportunity-form") : form;
+    const checkbox = targetForm?.querySelector?.('input[name="confirmed"]');
+    if (checkbox) checkbox.checked = false;
   }
 
   function summaryToken(hash) { return hash === null ? '"missing"' : typeof hash === "string" ? `"${hash}"` : undefined; }

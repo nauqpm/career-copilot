@@ -137,6 +137,17 @@ test("opportunity confirmation is invalidated when the relation changes and dupl
   assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 1);
 });
 
+test("unchanged opportunity polling preserves a checked confirmation", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+  browser.environment.document.activeElement = undefined;
+  await browser.poll();
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+
+  assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 1);
+});
+
 test("browser controller follows hashchange navigation and focuses the new page", async () => {
   const browser = browserFixture("#jobs/job-example");
   await initializeBrowserApp(browser.environment);

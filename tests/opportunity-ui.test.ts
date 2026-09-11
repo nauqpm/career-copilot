@@ -46,3 +46,14 @@ test("detail previews the exact pair, preserves saved decisions and escapes peer
   assert.match(html, /job-%3Cpeer%3E/);
   assert.doesNotMatch(html, /<img|<peer>/);
 });
+
+test("does not offer a repair peer as an editable opportunity choice", () => {
+  const html = renderJobDetail(
+    { id: "job-a", title: "Role", sourcePreview: "Role", updatedAt: "2026-09-11T00:00:00.000Z", raw: { content: "Role", source: { value: "Local" } }, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false }, hasAnalysis: false, hasCvDraft: false, captureStatus: "verified" },
+    "",
+    { health: "healthy", snapshot: { pointerHash: "sha256:" + "1".repeat(64), revision: null }, groups: [{ key: "job-a", jobIds: ["job-a"] }, { key: "job-bad", jobIds: ["job-bad"] }], jobIds: ["job-a", "job-bad"], repairJobIds: ["job-bad"] },
+  );
+
+  assert.doesNotMatch(html, /value="job-bad"/);
+  assert.match(html, /khôi phục|repair/i);
+});

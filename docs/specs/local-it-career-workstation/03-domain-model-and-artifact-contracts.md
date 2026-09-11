@@ -1,6 +1,6 @@
 # 03 — Domain model and artifact contracts
 
-> **Status:** Proposed for review
+> **Status:** Proposed overall; M3.1 capture and M3.3 review subsets delivered on the implementation branches
 > **Related:** [product scope](01-product-scope.md), [system architecture](02-system-architecture.md), [Vietnam IT localisation](18-vietnam-it-market-localization.md), [roadmap](19-roadmap-and-milestones.md)
 
 ## 1. Purpose and language
@@ -45,6 +45,12 @@ An opportunity is not synonymous with a source. One company may advertise the sa
 | External proof | Screenshot reference, portal confirmation ID, email/message reference | Candidate or connector | Preserve what was observed and mark confidence/ambiguity |
 
 The existing `source.md`, `raw.json`, `analysis.json`, `decision.json`, `cv-draft.md`, and `notes.md` layout is a valid starting point. Future work MUST migrate it additively: readers support old valid artifacts until a migration has written and verified the new equivalents.
+
+### Delivered M3.1 capture subset
+
+For a newly pasted or local-file job, the existing one-source-per-job layout now adds `source.json` beside `source.md`. `source.md` preserves the exact UTF-8 text supplied at intake, including BOM, line endings, whitespace and a missing final newline. `raw.json.content` remains the trimmed compatibility value and carries a capture marker containing the job ID and exact `source.json` file hash. The manifest records the candidate intake time, source kind, optional reference/filename, raw source hash and normalisation version. Readers verify the marker, manifest ID/hash and source bytes; only absence of both marker and manifest is legacy. A missing or changed new manifest is invalid, not silently promoted to legacy. Exact-content and conservative absolute HTTP(S) URL comparisons are read-only hints; they do not merge or delete source records.
+
+The local CLI import path accepts one `.txt` or `.md` file, validates fatal UTF-8 and the shared 1 MiB limit, and uses the same writer as dashboard paste. It does not call the URL-capable resolver. Older jobs and standalone `job analyze`/`prepare` output remain compatible and are not backfilled.
 
 ## 4. Workspace path contract
 
@@ -159,6 +165,14 @@ A profile revision contains facts usable across applications. It references evid
 ```
 
 The profile's current pointer MAY change. Earlier revisions MUST remain readable because documents, assessments, approvals, and submissions refer to a particular profile hash.
+
+### Delivered M3.2 opportunity decision subset
+
+Candidate-reviewed pair decisions are stored as complete immutable revisions under `data/opportunities/revisions/` with a hash-checked `current.json` pointer. A `same` relation joins a read-time connected component; `different` records an explicit exclusion; `defer` remains unresolved; `clear` removes only the named pair in a later revision. Unknown endpoints, transitive contradictions and stale pointer hashes fail closed. Source directories are never merged or deleted, and the component's smallest job ID is only a view key. Corrupt or dangling active references require repair rather than silently becoming an empty healthy state. This subset does not make existing analyses source-bound or grant application approval.
+
+### Delivered M3.3 candidate review subset
+
+The existing job detail route reads the opportunity view alongside the JD. It keeps group members as links to their independent source records, labels exact-content and conservative same-URL matches as advisory hints, and keeps saved `different`/`defer`/`clear` pair decisions visible. A candidate can choose a peer and relation (`same`, `different`, `defer`, `clear`) only when the view is healthy; saving requires a confirmation tied to the two IDs, relation, loaded pointer hash and current component membership. The API uses `If-Match`, rejects stale state with `409`, and the UI clears confirmation rather than retrying. A repair marker is read-only and never triggers external fetch or submission.
 
 ## 7. Explainable analysis, assessment, and document contracts
 

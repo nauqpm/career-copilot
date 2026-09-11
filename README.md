@@ -10,6 +10,12 @@ M1 adds create-only CLI output, hash-checked profile/note/source saves, corrupti
 
 M2 adds an explicit candidate-confirmed profile publish flow, immutable profile revisions, leaf-level evidence, a current pointer and local history. The implementation and verification record is [M2 profile evidence and versions](reports/m2-profile-evidence-versions.md), and the contract is [04 — Profile and evidence](docs/specs/local-it-career-workstation/04-profile-and-evidence.md). Existing `data/profile/candidate-profile.json` remains a compatible legacy fallback until the first successful publish; publishing does not rewrite it.
 
+M3.1 adds immutable local JD captures. New paste/import writes exact `source.md` bytes, a verified `source.json` manifest and compatible `raw.json`; existing legacy jobs remain readable and visibly unknown when they have no manifest. Exact-content and same-URL checks are advisory only. Import one local text file with `pnpm dev job import <file.txt|file.md> --root <workspace>`; this command never fetches a URL or sends the JD outside the workspace.
+
+M3.2 adds candidate-controlled opportunity decisions in `data/opportunities/`: “same”, “different”, “defer” and pair-only correction are stored as immutable revisions behind a hash-checked current pointer. Source folders stay independent. A contradiction or stale tab is rejected; no decision automatically submits, deletes or rewrites a JD.
+
+M3.3 adds the candidate review surface to each existing job detail route. It shows retained group members, exact-content/same-URL hints and saved pair decisions, then requires the candidate to select the peer, relation and an exact confirmation before saving against the loaded pointer hash. Repair or stale state is visible and read-only; no grouping action submits, deletes or rewrites a JD.
+
 ## Install
 
 ```bash
@@ -91,7 +97,7 @@ pnpm web
 
 To store data in a separate local workspace, set `$env:CAREER_WORKSPACE_ROOT = 'C:\CareerWorkspace'` in PowerShell before starting the server from this application checkout. UI assets still come from the checkout. Choose a normal local directory, not a symlink/junction or network/device path. Remove the variable after stopping the server to return to the default root.
 
-Open [http://127.0.0.1:4242](http://127.0.0.1:4242). The app runs only on your computer. Paste a JD and optionally label its source; the app creates a separate ignored folder at `data/jobs/<job-id>/` with `source.md` and `raw.json`.
+Open [http://127.0.0.1:4242](http://127.0.0.1:4242). The app runs only on your computer. Paste a JD and optionally label its source; the app creates a separate ignored folder at `data/jobs/<job-id>/` with exact `source.md`, `source.json` provenance and compatible `raw.json`. Duplicate hints on a detail page never merge or delete records.
 
 ### Dashboard routes and local files
 

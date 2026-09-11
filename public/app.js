@@ -5,7 +5,7 @@ import { mergeProfileSection, profileToSectionDraft } from "./profile-form.js";
 export function initializeBrowserApp(browser = globalThis) {
   const { document, window, fetch, FormData, File } = browser;
   const app = document.querySelector("#app");
-  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, profile: undefined, profileReady: false, note: "", jobDraft: {}, error: "", notice: "", menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
+  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, opportunity: undefined, opportunityConfirmationKey: undefined, profile: undefined, profileReady: false, note: "", jobDraft: {}, opportunityDraft: {}, error: "", notice: "", menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
   let loadVersion = 0;
   let pendingNotice;
   let profileDrafts = {};
@@ -36,10 +36,11 @@ export function initializeBrowserApp(browser = globalThis) {
     let loadedNoteHash;
     refreshing = true;
     try {
-      const [loadedSummary, detail, note] = await Promise.all([
+      const [loadedSummary, detail, note, opportunity] = await Promise.all([
         route.page === "new-job" ? state.summary : requestJson("/api/summary"),
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}`) : undefined,
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`, {}, (hash) => { loadedNoteHash = hash; }) : undefined,
+        route.page === "job" ? requestJson("/api/opportunities").catch((error) => ({ health: "needs-repair", warning: error.message, snapshot: null, groups: [], jobIds: [] })) : undefined,
       ]);
       const hydratedSummary = await hydrateCvRecommendations(loadedSummary, route);
       if (version !== loadVersion) return;
@@ -47,8 +48,13 @@ export function initializeBrowserApp(browser = globalThis) {
       const summary = loadedProfileVersion === profileVersion ? hydratedSummary : { ...hydratedSummary, profile: state.profile, profileHash: state.summary.profileHash, profileRevision: state.summary.profileRevision, profileHistory: state.summary.profileHistory, unresolvedClaims: state.summary.unresolvedClaims };
       if (loadedNoteVersion === noteVersions[route.jobId]) noteHashes = { ...noteHashes, [route.jobId]: loadedNoteHash };
       const content = loadedNoteVersion === noteVersions[route.jobId] ? note?.content ?? "" : state.note;
-      const changed = JSON.stringify([state.summary, state.detail, state.note]) !== JSON.stringify([summary, detail, content]);
-      state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, note: content, error: automatic ? state.error : "", loading: false };
+      const changed = JSON.stringify([state.summary, state.detail, state.opportunity, state.note]) !== JSON.stringify([summary, detail, opportunity, content]);
+      const opportunityChanged = JSON.stringify(state.opportunity) !== JSON.stringify(opportunity);
+      const sameJobRoute = state.route.page === "job" && route.page === "job" && state.route.jobId === route.jobId;
+      const nextOpportunityConfirmationKey = sameJobRoute && !opportunityChanged
+        ? state.opportunityConfirmationKey
+        : undefined;
+      state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, opportunity, opportunityConfirmationKey: nextOpportunityConfirmationKey, note: content, error: automatic ? state.error : "", loading: false };
       if (automatic && !changed) return;
       render(focus);
     } catch (error) {
@@ -105,9 +111,19 @@ export function initializeBrowserApp(browser = globalThis) {
 
   app.addEventListener("input", (event) => {
     const form = event.target.closest("form");
-    rememberDraft(form);
+    rememberDraft(form, event.target.name === "confirmed");
   });
   app.addEventListener("change", (event) => {
+    const form = typeof event.target.closest === "function" ? event.target.closest("form") : undefined;
+    if (form?.id === "opportunity-form") {
+      rememberDraft(form, event.target.name === "confirmed");
+      updateOpportunityPreview(form);
+      if (event.target.name === "confirmed" && event.target.checked) {
+        const values = new FormData(form);
+        const expectedHash = state.opportunity?.snapshot?.pointerHash ?? null;
+        state = { ...state, opportunityConfirmationKey: opportunityConfirmationKey(state.route.jobId, String(values.get("peerId") ?? ""), String(values.get("relation") ?? ""), expectedHash, state.opportunity) };
+      }
+    }
     if (event.target.id === "profile-source" && sourceBase === undefined) sourceBase = summaryToken(state.summary.profileSourceHash);
   });
 
@@ -120,13 +136,30 @@ export function initializeBrowserApp(browser = globalThis) {
     toggle.focus();
   });
 
-  function rememberDraft(form) {
+  function rememberDraft(form, preserveOpportunityConfirmation = false) {
     if (form?.id === "profile-form") return rememberProfileDraft(form);
     if (form?.id === "job-form") state = { ...state, jobDraft: Object.fromEntries(new FormData(form).entries()) };
+    if (form?.id === "opportunity-form") {
+      state = { ...state, opportunityDraft: Object.fromEntries(new FormData(form).entries()), opportunityConfirmationKey: undefined };
+      if (!preserveOpportunityConfirmation) clearOpportunityConfirmation(form);
+    }
     if (form?.id === "note-form" && state.route.page === "job") {
       if (!Object.hasOwn(noteBases, state.route.jobId)) noteBases = { ...noteBases, [state.route.jobId]: noteHashes[state.route.jobId] };
       noteDrafts = { ...noteDrafts, [state.route.jobId]: new FormData(form).get("content") };
     }
+  }
+
+  function updateOpportunityPreview(form) {
+    const preview = document.querySelector("#opportunity-preview");
+    if (!preview) return;
+    const values = new FormData(form);
+    const peerId = String(values.get("peerId") ?? "");
+    const relation = String(values.get("relation") ?? "same");
+    const label = { same: "Cùng cơ hội", different: "Khác cơ hội", defer: "Để sau", clear: "Gỡ quyết định cặp này" }[relation] ?? "Chưa có quyết định";
+    if (!peerId) { preview.textContent = "Chọn một JD để xem trước quyết định."; return; }
+    const currentGroup = state.opportunity?.groups?.find((group) => group.jobIds?.includes(state.route.jobId))?.jobIds ?? [state.route.jobId];
+    const peerGroup = state.opportunity?.groups?.find((group) => group.jobIds?.includes(peerId))?.jobIds ?? [peerId];
+    preview.textContent = `Bạn đang xem ${state.route.jobId} và ${peerId}: ${label}. Nhóm hiện tại: [${currentGroup.join(", ")}]; [${peerGroup.join(", ")}].`;
   }
 
   function rememberProfileDraft(form = document.querySelector("#profile-form")) {
@@ -144,11 +177,12 @@ export function initializeBrowserApp(browser = globalThis) {
 
   app.addEventListener("submit", async (event) => {
     const form = event.target;
-    if (!["job-form", "note-form", "profile-source-form", "profile-form"].includes(form.id)) return;
+    if (!["job-form", "note-form", "profile-source-form", "profile-form", "opportunity-form"].includes(form.id)) return;
     event.preventDefault();
-    if (savingForms.includes(form.id) || state.loading) return;
-    savingForms = [...savingForms, form.id];
-    rememberDraft(form);
+    if (savingForms.includes(form) || state.loading) return;
+    savingForms = [...savingForms, form];
+    if (form.id === "opportunity-form") state = { ...state, opportunityDraft: Object.fromEntries(new FormData(form).entries()) };
+    else rememberDraft(form);
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
     const route = state.route;
@@ -183,6 +217,24 @@ export function initializeBrowserApp(browser = globalThis) {
         if (state.route.page === "job" && state.route.jobId === route.jobId) {
           state = { ...state, note: saved.content };
           showNotice("Đã lưu ghi chú trên máy.");
+        }
+      } else if (form.id === "opportunity-form" && route.page === "job") {
+        const peerId = String(values.get("peerId") ?? "");
+        const relation = String(values.get("relation") ?? "");
+        const opportunityAtSubmit = state.opportunity;
+        const expectedHash = opportunityAtSubmit?.snapshot?.pointerHash ?? null;
+        const confirmationKey = opportunityConfirmationKey(route.jobId, peerId, relation, expectedHash, state.opportunity);
+        if (values.get("confirmed") !== "true" || state.opportunityConfirmationKey !== confirmationKey) throw new Error("Hãy xem đúng hai JD và xác nhận quyết định hiện tại trước khi lưu.");
+        if (!peerId || !["same", "different", "defer", "clear"].includes(relation)) throw new Error("Quyết định nhóm cơ hội chưa hợp lệ.");
+        const submittedOpportunityDraft = { peerId: values.get("peerId"), relation: values.get("relation"), confirmed: values.get("confirmed") };
+        const saved = await requestJson("/api/opportunities/decisions", { method: "POST", headers: matchHeader(expectedHash === null ? '"missing"' : `"${expectedHash}"`), body: JSON.stringify({ leftId: route.jobId, rightId: peerId, relation, confirmed: true }) });
+        const sameOpportunityContext = form.isConnected && state.route.page === "job" && state.route.jobId === route.jobId && JSON.stringify(state.opportunity) === JSON.stringify(opportunityAtSubmit);
+        if (sameOpportunityContext) {
+          const currentValues = new FormData(form);
+          const sameOpportunityDraft = ["peerId", "relation", "confirmed"].every((field) => currentValues.get(field) === submittedOpportunityDraft[field]);
+          state = { ...state, opportunity: saved, opportunityDraft: sameOpportunityDraft ? {} : state.opportunityDraft, opportunityConfirmationKey: undefined };
+          showNotice("Đã lưu quyết định nhóm cơ hội trên máy.");
+          render();
         }
       } else if (form.id === "profile-form") {
         if (state.summary.profileError) throw new Error("Hồ sơ đang lỗi. Hãy khôi phục dữ liệu và tải lại trước khi chỉnh sửa.");
@@ -223,7 +275,13 @@ export function initializeBrowserApp(browser = globalThis) {
     } catch (error) {
       const sameNote = form.id === "note-form" && state.route.page === "job" && state.route.jobId === route.jobId;
       const sameProfile = ["profile-form", "profile-source-form"].includes(form.id) && state.route.page === "profile";
-      if (form.isConnected || sameNote || sameProfile) showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
+      const sameOpportunityForm = form.id === "opportunity-form" && route.page === "job" && state.route.page === "job" && state.route.jobId === route.jobId && form.isConnected;
+      const shouldShowError = form.id === "opportunity-form" ? sameOpportunityForm : form.isConnected || sameNote || sameProfile;
+      if (shouldShowError) showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
+      if (sameOpportunityForm) {
+        state = { ...state, opportunityConfirmationKey: undefined };
+        clearOpportunityConfirmation(form);
+      }
     } finally {
       if (form.id === "profile-form") {
         profileSaving = false;
@@ -233,7 +291,7 @@ export function initializeBrowserApp(browser = globalThis) {
         if (currentForm?.id === "profile-form") currentForm.querySelector("fieldset").disabled = false;
       }
       button.disabled = false;
-      savingForms = savingForms.filter((id) => id !== form.id);
+      savingForms = savingForms.filter((savingForm) => savingForm !== form);
     }
   });
 
@@ -245,11 +303,22 @@ export function initializeBrowserApp(browser = globalThis) {
     notice.setAttribute("role", isError ? "alert" : "status");
   }
 
+  function clearOpportunityConfirmation(form) {
+    const targetForm = form?.isConnected === false ? document.querySelector("#opportunity-form") : form;
+    const checkbox = targetForm?.querySelector?.('input[name="confirmed"]');
+    if (checkbox) checkbox.checked = false;
+  }
+
   function summaryToken(hash) { return hash === null ? '"missing"' : typeof hash === "string" ? `"${hash}"` : undefined; }
   function rawToken(hash) { return hash === '"missing"' ? null : hash?.slice(1, -1); }
   function matchHeader(hash) {
     if (!hash) throw new Error("Chưa có phiên bản dữ liệu. Hãy tải lại và mở lại biểu mẫu trước khi lưu.");
     return { "If-Match": hash };
+  }
+
+  function opportunityConfirmationKey(jobId, peerId, relation, pointerHash, opportunity) {
+    const members = opportunity?.groups?.find((group) => group.jobIds?.includes(jobId))?.jobIds ?? [];
+    return JSON.stringify([jobId, peerId, relation, pointerHash, members]);
   }
 
   async function requestJson(path, options = {}, onVersion) {
@@ -270,7 +339,7 @@ export function initializeBrowserApp(browser = globalThis) {
   window.addEventListener("hashchange", () => {
     const notice = pendingNotice?.hash === window.location.hash ? pendingNotice.message : "";
     pendingNotice = undefined;
-    state = { ...state, route: parseRoute(window.location.hash), detail: undefined, note: "", notice, error: "", loading: true, menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
+    state = { ...state, route: parseRoute(window.location.hash), detail: undefined, opportunity: undefined, opportunityConfirmationKey: undefined, opportunityDraft: {}, note: "", notice, error: "", loading: true, menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
     render();
     return refresh(true);
   });

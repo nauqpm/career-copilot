@@ -1,6 +1,6 @@
 # 19 — Roadmap and milestones
 
-> **Status:** M0 and M1 accepted; M2 profile evidence and immutable versions delivered 2026-09-04. Later milestones remain gated and planned.
+> **Status:** M0 and M1 accepted; M2 profile evidence and immutable versions delivered 2026-09-04. M3 bounded intake/opportunity subset delivered across reviewed branches; broader milestones remain gated and planned.
 > **Related foundation:** [product scope](01-product-scope.md), [system architecture](02-system-architecture.md), [domain and artifact contracts](03-domain-model-and-artifact-contracts.md), [Vietnam IT localisation](18-vietnam-it-market-localization.md)
 > **M2 delivery record:** [profile evidence and versions](../../../reports/m2-profile-evidence-versions.md) · [M2 contract](04-profile-and-evidence.md)
 
@@ -54,6 +54,12 @@ M2 explicitly stops before PDF parsing, GitHub/URL fetching, salary model restru
 **Exit criteria:** A document or assessment can later reference a fixed profile hash; profile edits do not rewrite a previously referenced revision; unsupported claims remain visibly unresolved. The consumers and package binding are future work in M4–M6.
 
 ## 5. Small specification sequence
+
+### M3 delivery record
+
+M3 is delivered only for the bounded local subset: immutable paste/file captures, deterministic exact-content and conservative same-URL hints, candidate-reviewed pair decisions, and the existing job-detail review UI. The UI preserves independent source folders, requires an exact confirmation plus `If-Match` pointer, and fails closed on corruption or stale state. URL fetch, portal connectors, fuzzy/semantic deduplication, source-bound analysis, application submission, and broad scout/retention automation remain deferred.
+
+**Exit criteria:** A candidate can inspect one JD, follow retained group members, compare advisory hints, record/correct a pair decision, and recover from stale or repair-marked state without any external side effect. Verification is recorded in the branch-local `report.md`.
 
 The detailed documents in this folder isolate one decision surface at a time. The M2 contract is [04 — Profile and evidence](04-profile-and-evidence.md); implementation begins only after the relevant document is approved.
 

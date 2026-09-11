@@ -16,6 +16,7 @@ import {
   readWorkspaceJobNoteSnapshot,
   saveWorkspaceJobNote,
 } from "../workspace/storage.js";
+import { OpportunityInputError, OpportunityMissingJobError, OpportunityRepairError, readOpportunityView, saveOpportunityDecision } from "../workspace/opportunities.js";
 
 const maxJsonBytes = 1024 * 1024;
 
@@ -58,6 +59,23 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       const body = await readJsonBody(request);
       const job = await createPastedJob(root, pastedJobInput(body));
       return sendJson(response, 201, job);
+    }
+    if (method === "GET" && path === "/api/opportunities") {
+      try {
+        const view = await readOpportunityView(root);
+        setVersion(response, view.snapshot.pointerHash);
+        return sendJson(response, 200, { snapshot: view.snapshot, groups: view.groups, jobIds: view.jobIds, repairJobIds: view.repairJobIds, health: "healthy" });
+      } catch (error) {
+        if (error instanceof OpportunityRepairError) return sendJson(response, 409, { snapshot: null, groups: [], jobIds: [], health: "needs-repair", warning: "Cần khôi phục dữ liệu nhóm cơ hội trước khi tiếp tục." });
+        throw error;
+      }
+    }
+    if (method === "POST" && path === "/api/opportunities/decisions") {
+      const body = opportunityDecisionInput(await readJsonBody(request));
+      const result = await saveOpportunityDecision(root, { ...body, expectedHash: expectedVersion(request) });
+      setVersion(response, result.pointerHash);
+      const view = await readOpportunityView(root);
+      return sendJson(response, 201, { snapshot: view.snapshot, groups: view.groups, jobIds: view.jobIds, repairJobIds: view.repairJobIds, health: "healthy" });
     }
     if (method === "GET" && path === "/api/profile") {
       let snapshot;
@@ -193,6 +211,13 @@ function pastedJobInput(value: unknown): { content: string; sourceReference?: st
   return { content: value.content, ...(value.sourceReference === undefined ? {} : { sourceReference: value.sourceReference }) };
 }
 
+function opportunityDecisionInput(value: unknown): { leftId: string; rightId: string; relation: "same" | "different" | "defer" | "clear"; confirmed: true } {
+  if (!isRecord(value) || typeof value.leftId !== "string" || typeof value.rightId !== "string" || !/^[a-z0-9-]+$/.test(value.leftId) || !/^[a-z0-9-]+$/.test(value.rightId) || value.leftId === value.rightId || !["same", "different", "defer", "clear"].includes(String(value.relation)) || value.confirmed !== true) {
+    throw new InputError("Opportunity decision is invalid");
+  }
+  return { leftId: value.leftId, rightId: value.rightId, relation: value.relation as "same" | "different" | "defer" | "clear", confirmed: true };
+}
+
 function noteInput(value: unknown): string {
   if (!isRecord(value) || typeof value.content !== "string") throw new InputError("Note content is required");
   return value.content;
@@ -217,6 +242,9 @@ function sendError(response: ServerResponse, error: unknown): void {
   if (error instanceof CorruptionError) return sendJson(response, 500, { error: "Unable to read the local profile data. Check or recover the stored artifacts." });
   if (error instanceof PreconditionError) return sendJson(response, 428, { error: "Read the current artifact before saving (If-Match required)." });
   if (error instanceof ConflictError) return sendJson(response, 409, { error: "Artifact changed or is busy. Reload and reconcile your draft before saving." });
+  if (error instanceof OpportunityRepairError) return sendJson(response, 409, { error: "Opportunity data needs repair before it can be changed." });
+  if (error instanceof OpportunityMissingJobError) return sendJson(response, 404, { error: "Not found" });
+  if (error instanceof OpportunityInputError) return sendJson(response, 400, { error: "The supplied local data is invalid." });
   if (error instanceof InputError || error instanceof SyntaxError || isValidationError(error)) {
     return sendJson(response, 400, { error: "The supplied local data is invalid." });
   }

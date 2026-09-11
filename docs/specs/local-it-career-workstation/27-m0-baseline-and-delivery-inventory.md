@@ -77,7 +77,7 @@ M0 không chạy lại application tests/build vì chỉ sửa tài liệu. Khô
 | --- | --- | --- |
 | `data/profile/source.md` | Profile source | Giữ bytes/path provenance; không thay bằng extraction. |
 | `data/profile/candidate-profile.json` | Profile revision đầu + current pointer | Import có preview/backup; không tự tạo evidence đã verified. |
-| `data/jobs/<id>/source.md` | Raw capture | Giữ source hiện tại; bản lưu hiện có thêm final newline nếu thiếu, không hứa byte-for-byte với input ban đầu. |
+| `data/jobs/<id>/source.md` | Raw capture | Legacy bytes giữ nguyên; capture mới giữ byte-for-byte input và ghi thêm `source.json` provenance. |
 | `data/jobs/<id>/raw.json` | Normalized input + provenance | Giữ tương thích; metadata không biết phải để unknown, không bịa retrieval date. |
 | `data/jobs/<id>/analysis.json` | Analysis revision | Giữ facts; chỉ thêm source links đã đối chiếu được. |
 | `data/jobs/<id>/decision.json` | Legacy assessment | Giữ ý nghĩa decision; chưa có version/evidence mới thì ghi legacy, không nâng trạng thái ngầm. |
@@ -93,7 +93,7 @@ Contract target chi tiết ở [03](03-domain-model-and-artifact-contracts.md). 
 | --- | --- | --- | --- |
 | NEXT-01 / M1 | Storage resilience + backup tối thiểu | Existing writers, parsers, workspace tests | Non-overwrite CLI; một raw job hỏng không phá list; conflict rõ ràng; copy/restore sample; test ghi lỗi giữ bản cũ. Chốt root/lock strategy cho CLI + server. |
 | NEXT-02 / M2 | Profile revisions + evidence | Profile schema/form/skill | Chọn revision cụ thể; edit không đổi revision cũ; legacy import không giả verified; migration preview/backup. |
-| NEXT-03 / M3 | Capture/provenance + exact duplicate hints | Job input/storage/analyzer | Raw tồn tại trước analysis; metadata biết/unknown rõ; hash/URL duplicate chỉ gợi ý, user chọn liên kết. |
+| NEXT-03 / M3 | Capture/provenance + exact duplicate hints | Job input/storage/analyzer | M3.1 delivers raw-before-analysis, explicit metadata/legacy health and advisory hash/URL hints; M3.2 delivers candidate-reviewed links with retained source records; M3.3 delivers the existing job-detail review UI with exact confirmation, stale protection and repair-safe read-only behavior. |
 | NEXT-04 / M4 | Version-bound matching | Decision schema + assess-job | Mỗi positive match có requirement/evidence; unknown không thành gap chắc chắn; stale khi input đổi; eval fixtures. |
 | NEXT-05 / M5 | Một CV workflow | `cv-draft.md`, current download/render UI | Draft → review độc lập → immutable revision; edit phải review lại; chốt Markdown/PDF tối thiểu cho dogfood. |
 | NEXT-06 / M6 | Application archive/outcome thủ công | Job detail, notes | Record exact CV revision/destination khi biết; unknown giữ rõ; candidate-reported provenance; đọc được khi không có connector. M8 chỉ bổ sung analytics sau đó. |

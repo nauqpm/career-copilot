@@ -1,33 +1,54 @@
-# M3.3 implementation report
+# Integrated opportunity review remediation
 
-## Scope
+## Scope and ancestry
 
-Implemented the bounded M3 closeout on branch `feature/opportunity-review-ux` (forked from local `main` and carrying the M3.1/M3.2 dependency commits).
+Delivery branch: `feature/review-remediation`.
+Starting UX SHA: `3358cc67b4f715ba74be76cd5b9971b4cd1b4e6f`.
+Local main base: `fdb1571bb3349b9bd1ab7aba366880badec9ae03`.
 
-- The existing job detail page now shows retained opportunity-group members, exact-content and same-URL advisory hints, and saved pair decisions.
-- Candidate decisions use a native peer/relation form (`same`, `different`, `defer`, `clear`) with an exact preview and explicit confirmation.
-- Confirmation is bound to both job IDs, the relation, the loaded opportunity pointer hash and the displayed component members. Stale or repaired state is read-only; the UI never retries with a fresh hash.
-- Added end-to-end local-storage/API coverage for transitive grouping, correction, stale writes, legacy members, corrupt pointers and byte-for-byte source preservation.
-- Fixed the M3.2 union-find bug that could miss transitive contradictions when UUID ordering put the larger root on the left.
+This branch retains the existing M3.1/M3.2/M3.3 foundation and UX fixes, then integrates the missing B/C deltas and report findings. It is a combined delivery branch, not a graph-only delta against main. The five source branches remain unchanged. Implementation and independent review workers use GPT-5.6 Luna with reasoning max as requested.
 
-## Verification
+| Finding | Resolution on this branch |
+| --- | --- |
+| F1 | Existing deterministic union retained; added four-node transitive contradiction coverage with bounded root/edge order variants. |
+| F2 | Existing stable-poll confirmation, stale success/failure isolation and repair-peer filtering retained and covered by the registered suite. |
+| F3 | Repair markers and write gates share one source-health predicate, including missing legacy source.md; healthy unrelated pairs remain writable. |
+| F4 | Valid job-name symbolic links/junctions mark the duplicate scan incomplete without traversal. Windows junction regression passes. |
+| F5 | Delayed saves update persisted state while retaining a newer form draft. Confirmation is invalidated for the new state; regression verifies the outgoing relation and retained new selection. |
+| F6 | Capture B provenance checks and readiness C summary reuse now coexist with graph and UX fixes. |
 
-Fresh checks on this branch:
+Canonical raw/manifest source mapping rejects mismatched metadata, damaged capture candidates do not produce trusted duplicate hints, and opportunity reads/writes reuse workspace summaries rather than repeatedly reading details. No dependencies were added.
 
-- `npm test` — passed, 203 tests passed, 0 failed (run with the approved external Windows environment after the sandbox-only `EPERM` failure).
-- Explicit complete suite with `node --test --test-concurrency=1 --import tsx …` — passed, 203 tests passed, 0 failed.
-- `node --test --test-concurrency=1 --experimental-test-coverage --import tsx …` — passed, 203 tests passed, 0 failed; all-files coverage: 96.10% lines, 87.92% branches, 96.56% functions.
-- Changed runtime coverage: `public/app.js` 99.09% lines / 85.48% branches, `public/render.js` 100.00% / 86.70%, `src/job/opportunities.ts` 84.62% / 84.85%, `src/workspace/opportunities.ts` 99.12% / 89.04%.
-- `npm run build` — passed.
-- `pnpm audit --audit-level=high` — passed; no known vulnerabilities found.
-- `git diff --check` — passed; only normal LF/CRLF warnings were reported.
+Implementation commits: `c444301` (capture), `22670bc` (readiness/graph), `5a7d901` (UX). The verification below covers this source/test tree; the following documentation-only commit records these results.
 
-## Acceptance and limitations
+Independent Luna review found no actionable correctness, security or regression findings in the bounded diff from `3358cc6`.
 
-- `NEXT-03` bounded subset is covered by capture, duplicate-hint, opportunity-storage/API, UI-rendering and `m3-opportunity-flow` tests.
-- Synthetic browser-controller coverage passed, including confirmation invalidation and duplicate-submit protection. A real browser automation harness is not available in this repository, so manual/browser E2E verification remains blocked and is not claimed as complete.
-- Original `source.md`, `source.json` and `raw.json` bytes remain unchanged through every tested decision mutation. Legacy sources remain readable and visibly unverified.
-- Corrupt or dangling opportunity state fails closed. Recovery must stop active writers first, back up the workspace, then restore the matching `data/opportunities/current.json` and revision file together; do not delete history or lock files while a writer is active.
-- URL fetching, portal connectors, fuzzy/semantic deduplication, source-bound analysis, application submission and broad scout/retention automation remain deferred. Existing `analysis.json` is not made source-bound, and opportunity grouping never grants submission approval.
+## Fresh verification — 2026-09-11
 
-No push, merge or remote PR was performed.
+- Registered full suite, Node test runner with concurrency one and experimental coverage: **213 passed, 0 failed, 0 skipped**.
+- All-files coverage (including test files): **96.35% lines, 88.42% branches, 96.83% functions**.
+- Changed runtime line/branch coverage: app.js 99.15% / 87.31%; capture.ts 98.10% / 70.00%; workspace/storage.ts 95.96% / 91.36%; workspace/opportunities.ts 99.15% / 90.79%. Coverage is not claimed to exceed 80% in every individual file/metric.
+- Final TypeScript build: passed.
+- `pnpm audit --audit-level=high`: no known vulnerabilities found.
+- `git diff --check`: passed.
+- Focused RED/GREEN evidence: capture regressions produced four intended failures before the fix; missing legacy source marker failed before the readiness fix; delayed draft regression failed against the prior UI logic. Existing graph correction already passed the new graph regression.
+
+Reproduction (PowerShell):
+
+```powershell
+$reviewTests = ((Get-Content package.json -Raw | ConvertFrom-Json).scripts.test -split ' ') | Where-Object { $_ -like 'tests/*' }
+node --test --test-concurrency=1 --experimental-test-coverage --import tsx @reviewTests
+node node_modules/typescript/bin/tsc --pretty false
+pnpm audit --audit-level=high
+git diff --check
+```
+
+Node 20.19.0 was used. Sandbox Node startup initially failed with EPERM while resolving C:\Users\quanp; verification then ran successfully with approved execution outside the sandbox.
+
+## Browser evidence and limits
+
+A real in-app browser exercised an isolated synthetic workspace: create two matching captures, display advisory duplicates, select and confirm a pair, blur and allow stable polling, save same, reload the updated UI, then clear the decision and observe separated groups. The test server was stopped afterward. The browser smoke used the already-running backend; fresh backend integration is covered by the full suite. Deliberately delayed responses and route races are covered by the synthetic controller tests, not a real-browser network-delay test. This is bounded smoke evidence, not exhaustive browser E2E coverage.
+
+Source preservation, legacy readability, corrupt-state blocking, and pointer conflict handling remain covered by tests. No real career data was used for verification. Recovery still requires stopping writers, backing up the workspace, and restoring matching pointer/revision files together. Historical drafts are not promoted to reviewed/approved.
+
+Remote main, GitHub CI and PR state were not verified in this task. No push, merge or remote PR was performed. M4/M5, portal fetching, automatic submission, accounts, databases and agent services remain outside scope.

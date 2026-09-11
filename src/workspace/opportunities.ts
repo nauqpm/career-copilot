@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { applyPairDecision, deriveOpportunityGroups, parseOpportunityRevision, type OpportunityRevision, type PairDecision } from "../job/opportunities.js";
-import { readWorkspaceJob, listWorkspaceJobs } from "./storage.js";
+import { listWorkspaceJobs, type WorkspaceJobSummary } from "./storage.js";
 import { ConflictError, contentHash, readArtifact, writeArtifact } from "./artifacts.js";
 
 export class OpportunityRepairError extends Error { constructor(message = "Opportunity data needs repair.") { super(message); this.name = "OpportunityRepairError"; } }
@@ -45,9 +45,10 @@ export async function saveOpportunityDecision(root: string, input: {
   if (input.expectedHash !== null && !/^sha256:[a-f0-9]{64}$/.test(input.expectedHash)) throw new OpportunityInputError("Opportunity pointer hash is invalid.");
   const current = await readOpportunitySnapshot(root);
   if (current.pointerHash !== input.expectedHash) throw new ConflictError();
-  await ensureHealthyJob(root, input.leftId);
-  await ensureHealthyJob(root, input.rightId);
   const jobs = await listWorkspaceJobs(root);
+  const jobsById = new Map(jobs.map((job) => [job.id, job] as const));
+  ensureHealthySummary(jobsById, input.leftId);
+  ensureHealthySummary(jobsById, input.rightId);
   const jobIds = jobs.map((job) => job.id);
   const previousDecisions = current.revision?.decisions ?? [];
   const decisions = applyPairDecision(previousDecisions, { leftId: input.leftId, rightId: input.rightId, relation: input.relation });
@@ -55,7 +56,10 @@ export async function saveOpportunityDecision(root: string, input: {
     if (error instanceof Error && /unknown job/i.test(error.message)) throw new OpportunityMissingJobError();
     throw new OpportunityInputError(error instanceof Error ? error.message : "Opportunity decision is invalid.");
   }
-  for (const decision of decisions) await ensureHealthyJob(root, decision.leftId).then(() => ensureHealthyJob(root, decision.rightId));
+  for (const decision of decisions) {
+    ensureHealthySummary(jobsById, decision.leftId);
+    ensureHealthySummary(jobsById, decision.rightId);
+  }
   const revision: OpportunityRevision = {
     schemaVersion: 1,
     id: `opportunity-rev-${randomUUID()}`,
@@ -76,24 +80,25 @@ export async function readOpportunityView(root: string): Promise<{ snapshot: Opp
   const snapshot = await readOpportunitySnapshot(root);
   const jobs = await listWorkspaceJobs(root);
   const jobIds = jobs.map((job) => job.id);
+  const jobsById = new Map(jobs.map((job) => [job.id, job] as const));
   let groups;
   try { groups = deriveOpportunityGroups(jobIds, snapshot.revision?.decisions ?? []); }
   catch { throw new OpportunityRepairError("Opportunity decisions reference missing or contradictory jobs."); }
-  for (const decision of snapshot.revision?.decisions ?? []) {
-    await ensureHealthyJob(root, decision.leftId);
-    await ensureHealthyJob(root, decision.rightId);
+  const decisionJobIds = new Set((snapshot.revision?.decisions ?? []).flatMap((decision) => [decision.leftId, decision.rightId]));
+  for (const id of decisionJobIds) {
+    ensureHealthySummary(jobsById, id);
   }
-  return { snapshot, groups, jobIds, repairJobIds: jobs.filter((job) => job.invalidSourceData !== undefined).map((job) => job.id).sort() };
+  return { snapshot, groups, jobIds, repairJobIds: jobs.filter((job) => !isSourceHealthy(job)).map((job) => job.id).sort() };
 }
 
-async function ensureHealthyJob(root: string, id: string): Promise<void> {
-  try {
-    const job = await readWorkspaceJob(root, id);
-    if (job.invalidSourceData || job.artifactStatus.source !== true) throw new OpportunityRepairError("Referenced job source needs repair.");
-  } catch (error) {
-    if (error instanceof OpportunityRepairError) throw error;
-    throw new OpportunityMissingJobError();
-  }
+function ensureHealthySummary(jobsById: ReadonlyMap<string, WorkspaceJobSummary>, id: string): void {
+  const job = jobsById.get(id);
+  if (!job) throw new OpportunityMissingJobError();
+  if (!isSourceHealthy(job)) throw new OpportunityRepairError("Referenced job source needs repair.");
+}
+
+function isSourceHealthy(job: WorkspaceJobSummary): boolean {
+  return job.invalidSourceData === undefined && job.artifactStatus.source === true;
 }
 
 function parsePointer(value: unknown): { schemaVersion: 1; revisionId: string; revisionHash: string } {

@@ -101,6 +101,89 @@ test("legacy members and corrupt grouping state stay readable and block writes",
   }
 });
 
+test("keeps an unrelated corrupt singleton visible without allowing a write to it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m3-repair-singleton-"));
+  const first = await createLocalJob(root, { content: "First role", sourceKind: "pasted-text" });
+  const second = await createLocalJob(root, { content: "Second role", sourceKind: "pasted-text" });
+  const third = await createLocalJob(root, { content: "Third role", sourceKind: "pasted-text" });
+  await writeFile(join(root, "data", "jobs", third.id, "raw.json"), "{broken", "utf8");
+  const app = await startServer(root);
+  try {
+    const view = await fetch(`${app.url}/api/opportunities`);
+    assert.equal(view.status, 200);
+    const body = await view.json() as { health: string; repairJobIds: string[] };
+    assert.equal(body.health, "healthy");
+    assert.deepEqual(body.repairJobIds, [third.id]);
+    const saved = await post(app.url, { leftId: first.id, rightId: second.id, relation: "same", confirmed: true }, '"missing"');
+    assert.equal(saved.status, 201);
+    const savedBody = await saved.json() as { health: string; groups: { jobIds: string[] }[]; repairJobIds: string[] };
+    assert.equal(savedBody.health, "healthy");
+    assert.deepEqual(savedBody.groups.find((group) => group.jobIds.length === 2)?.jobIds.sort(), [first.id, second.id].sort());
+    assert.deepEqual(savedBody.repairJobIds, [third.id]);
+    const savedEtag = saved.headers.get("etag") ?? "";
+    assert.match(savedEtag, /^"sha256:[a-f0-9]{64}"$/);
+    const blocked = await post(app.url, { leftId: first.id, rightId: third.id, relation: "same", confirmed: true }, savedEtag);
+    assert.equal(blocked.status, 409);
+    const after = await fetch(`${app.url}/api/opportunities`);
+    assert.equal(after.status, 200);
+    assert.equal(after.headers.get("etag"), savedEtag);
+    const afterBody = await after.json() as { health: string; groups: { jobIds: string[] }[]; repairJobIds: string[] };
+    assert.equal(afterBody.health, "healthy");
+    assert.deepEqual(afterBody.groups.find((group) => group.jobIds.length === 2)?.jobIds.sort(), [first.id, second.id].sort());
+    assert.deepEqual(afterBody.repairJobIds, [third.id]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("returns repair-needed when an active decision references a corrupt raw record", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m3-repair-active-"));
+  const first = await createLocalJob(root, { content: "First role", sourceKind: "pasted-text" });
+  const second = await createLocalJob(root, { content: "Second role", sourceKind: "pasted-text" });
+  const app = await startServer(root);
+  try {
+    const linked = await post(app.url, { leftId: first.id, rightId: second.id, relation: "same", confirmed: true }, '"missing"');
+    assert.equal(linked.status, 201);
+    await writeFile(join(root, "data", "jobs", second.id, "raw.json"), "{broken", "utf8");
+    const grouping = await fetch(`${app.url}/api/opportunities`);
+    assert.equal(grouping.status, 409);
+    assert.equal((await grouping.json() as { health: string }).health, "needs-repair");
+    assert.equal((await fetch(`${app.url}/api/jobs/${first.id}`)).status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test("marks a legacy job missing source.md for repair while healthy pairs remain writable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-m3-legacy-source-"));
+  const first = await createLocalJob(root, { content: "First role", sourceKind: "pasted-text" });
+  const second = await createLocalJob(root, { content: "Second role", sourceKind: "pasted-text" });
+  const legacyId = "job-legacy-missing-source";
+  const legacyDirectory = join(root, "data", "jobs", legacyId);
+  await mkdir(legacyDirectory, { recursive: true });
+  await writeFile(join(legacyDirectory, "raw.json"), `${JSON.stringify({ content: "Legacy role", source: { type: "text", value: "Legacy import" } })}\n`, "utf8");
+  const app = await startServer(root);
+  try {
+    const initial = await fetch(`${app.url}/api/opportunities`);
+    assert.equal(initial.status, 200);
+    const initialBody = await initial.json() as { health: string; repairJobIds: string[]; groups: { jobIds: string[] }[] };
+    assert.equal(initialBody.health, "healthy");
+    assert.deepEqual(initialBody.repairJobIds, [legacyId]);
+
+    const saved = await post(app.url, { leftId: first.id, rightId: second.id, relation: "same", confirmed: true }, '"missing"');
+    assert.equal(saved.status, 201);
+    const savedBody = await saved.json() as { health: string; repairJobIds: string[]; groups: { jobIds: string[] }[] };
+    assert.equal(savedBody.health, "healthy");
+    assert.deepEqual(savedBody.repairJobIds, [legacyId]);
+    assert.deepEqual(savedBody.groups.find((group) => group.jobIds.length === 2)?.jobIds.sort(), [first.id, second.id].sort());
+
+    const blocked = await post(app.url, { leftId: first.id, rightId: legacyId, relation: "same", confirmed: true }, saved.headers.get("etag")!);
+    assert.equal(blocked.status, 409);
+  } finally {
+    await app.close();
+  }
+});
+
 type OpportunityView = {
   snapshot: { revision: { decisions: { leftId: string; rightId: string; relation: string }[] } };
   groups: { jobIds: string[] }[];

@@ -30,6 +30,27 @@ test("detects transitive contradictions regardless of endpoint ordering", () => 
   assert.throws(() => deriveOpportunityGroups(["job-z", "job-y", "job-x"], decisions), /transitive contradiction/i);
 });
 
+test("rejects transitive contradictions across bounded root and edge order permutations", () => {
+  const decisions: PairDecision[] = [
+    { leftId: "job-a", rightId: "job-z", relation: "same" },
+    { leftId: "job-b", rightId: "job-y", relation: "same" },
+    { leftId: "job-y", rightId: "job-z", relation: "same" },
+    { leftId: "job-a", rightId: "job-b", relation: "different" },
+  ];
+  const cases: { jobIds: string[]; decisions: PairDecision[] }[] = [
+    { jobIds: ["job-a", "job-z", "job-b", "job-y"], decisions },
+    { jobIds: ["job-y", "job-b", "job-z", "job-a"], decisions: [...decisions].reverse() },
+    { jobIds: ["job-z", "job-a", "job-y", "job-b"], decisions: [decisions[2]!, decisions[0]!, decisions[3]!, decisions[1]!] },
+  ];
+
+  for (const candidate of cases) {
+    assert.throws(
+      () => deriveOpportunityGroups(candidate.jobIds, candidate.decisions),
+      /transitive contradiction/i,
+    );
+  }
+});
+
 test("defer does not connect groups and clear only removes the named pair", () => {
   const decisions: PairDecision[] = [
     { leftId: "job-a", rightId: "job-b", relation: "same" },

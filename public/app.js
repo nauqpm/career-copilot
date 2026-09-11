@@ -49,7 +49,12 @@ export function initializeBrowserApp(browser = globalThis) {
       if (loadedNoteVersion === noteVersions[route.jobId]) noteHashes = { ...noteHashes, [route.jobId]: loadedNoteHash };
       const content = loadedNoteVersion === noteVersions[route.jobId] ? note?.content ?? "" : state.note;
       const changed = JSON.stringify([state.summary, state.detail, state.opportunity, state.note]) !== JSON.stringify([summary, detail, opportunity, content]);
-      state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, opportunity, opportunityConfirmationKey: undefined, note: content, error: automatic ? state.error : "", loading: false };
+      const opportunityChanged = JSON.stringify(state.opportunity) !== JSON.stringify(opportunity);
+      const sameJobRoute = state.route.page === "job" && route.page === "job" && state.route.jobId === route.jobId;
+      const nextOpportunityConfirmationKey = sameJobRoute && !opportunityChanged
+        ? state.opportunityConfirmationKey
+        : undefined;
+      state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, opportunity, opportunityConfirmationKey: nextOpportunityConfirmationKey, note: content, error: automatic ? state.error : "", loading: false };
       if (automatic && !changed) return;
       render(focus);
     } catch (error) {

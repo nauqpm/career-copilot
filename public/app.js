@@ -226,9 +226,16 @@ export function initializeBrowserApp(browser = globalThis) {
         const confirmationKey = opportunityConfirmationKey(route.jobId, peerId, relation, expectedHash, state.opportunity);
         if (values.get("confirmed") !== "true" || state.opportunityConfirmationKey !== confirmationKey) throw new Error("Hãy xem đúng hai JD và xác nhận quyết định hiện tại trước khi lưu.");
         if (!peerId || !["same", "different", "defer", "clear"].includes(relation)) throw new Error("Quyết định nhóm cơ hội chưa hợp lệ.");
+        const submittedOpportunityDraft = { peerId: values.get("peerId"), relation: values.get("relation"), confirmed: values.get("confirmed") };
         const saved = await requestJson("/api/opportunities/decisions", { method: "POST", headers: matchHeader(expectedHash === null ? '"missing"' : `"${expectedHash}"`), body: JSON.stringify({ leftId: route.jobId, rightId: peerId, relation, confirmed: true }) });
         const sameOpportunityContext = form.isConnected && state.route.page === "job" && state.route.jobId === route.jobId && JSON.stringify(state.opportunity) === JSON.stringify(opportunityAtSubmit);
-        if (sameOpportunityContext) { state = { ...state, opportunity: saved, opportunityDraft: {}, opportunityConfirmationKey: undefined }; showNotice("Đã lưu quyết định nhóm cơ hội trên máy."); render(); }
+        if (sameOpportunityContext) {
+          const currentValues = new FormData(form);
+          const sameOpportunityDraft = ["peerId", "relation", "confirmed"].every((field) => currentValues.get(field) === submittedOpportunityDraft[field]);
+          state = { ...state, opportunity: saved, opportunityDraft: sameOpportunityDraft ? {} : state.opportunityDraft, opportunityConfirmationKey: undefined };
+          showNotice("Đã lưu quyết định nhóm cơ hội trên máy.");
+          render();
+        }
       } else if (form.id === "profile-form") {
         if (state.summary.profileError) throw new Error("Hồ sơ đang lỗi. Hãy khôi phục dữ liệu và tải lại trước khi chỉnh sửa.");
         rememberProfileDraft(form);

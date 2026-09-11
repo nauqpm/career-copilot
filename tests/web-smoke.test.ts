@@ -205,6 +205,25 @@ test("a delayed opportunity save cannot overwrite another job's pointer", async 
   assert.equal(writes[1]?.options.headers?.["If-Match"], '"opportunity-original"');
 });
 
+test("a delayed opportunity success preserves a newer selection in the same form", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  browser.beforeRequest((_path, options) => options.method === "POST" ? saveGate : Promise.resolve());
+  const saving = browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  await browser.changeOpportunity("relation", "different");
+  releaseSave();
+  await saving;
+
+  const write = browser.requests.find((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions");
+  assert.equal(JSON.parse(write?.options.body ?? "{}").relation, "same");
+  assert.match(browser.html(), /value="different" selected/);
+  assert.doesNotMatch(browser.html(), /name="confirmed"[^>]*checked/);
+});
+
 test("a failed opportunity save cannot clear another job's confirmation", async () => {
   const browser = browserFixture("#jobs/job-example");
   browser.setJobDetails({ "job-other": { ...populatedFixture(), id: "job-other", title: "Other role", sourcePreview: "Other role" } });

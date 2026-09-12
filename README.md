@@ -16,6 +16,8 @@ M3.2 adds candidate-controlled opportunity decisions in `data/opportunities/`: �
 
 M3.3 adds the candidate review surface to each existing job detail route. It shows retained group members, exact-content/same-URL hints and saved pair decisions, then requires the candidate to select the peer, relation and an exact confirmation before saving against the loaded pointer hash. Repair or stale state is visible and read-only; no grouping action submits, deletes or rewrites a JD.
 
+The bounded explainable-matching delivery adds source-bound analysis revisions and immutable, evidence-linked assessments. It compares one verified local capture with one explicitly selected or current published profile revision under policy `m4-v1`. The assessment keeps exact requirement IDs, source quotes, modalities, profile evidence IDs, producer metadata and input hashes; it has no score and grants no CV, approval or submission authority. A newer profile, analysis, policy or changed/repair-marked capture makes the prior assessment stale or unreadable without rewriting its bytes. See [the explainable-matching delivery record](reports/m4-explainable-matching.md) and the bounded contracts in [03 — Domain model](docs/specs/local-it-career-workstation/03-domain-model-and-artifact-contracts.md) and [06 — Explainable matching](docs/specs/local-it-career-workstation/06-explainable-matching.md).
+
 ## Install
 
 ```bash
@@ -40,7 +42,7 @@ For a directory input, the CLI writes one normalized JSON file per JD and prints
 
 `--out` refuses an existing file by default. For an intentional single-file replacement, read the current file and pass `--expected-hash sha256:<64 lowercase hex digits>`; a stale hash refuses the write. This also applies when validating an analysis/profile/decision into an existing path. On PowerShell, inspect the hash with `(Get-FileHash -LiteralPath '<output-file>' -Algorithm SHA256).Hash.ToLowerInvariant()`. Git privacy warnings are advisory and never modify ignore rules.
 
-## Produce `JobAnalysis`
+## Produce a legacy `JobAnalysis`
 
 1. Open `skills/analyze-job/SKILL.md`.
 2. Give Codex one normalized `RawJobContent` JSON from `data/raw/`.
@@ -52,6 +54,34 @@ pnpm dev job validate-analysis ./draft-analysis.json --out ./data/analysis/backe
 ```
 
 The CLI deliberately does not call an LLM provider. It owns input normalization, persistence, and schema validation; Codex applies the skill's semantic extraction rules.
+
+## Source-bound analysis and explainable matching
+
+The legacy `analysis.json` path remains readable, but it is not an input to the bounded explainable-matching flow. Start with a verified captured job and hand the exact source to `skills/analyze-job/SKILL.md`:
+
+```bash
+pnpm dev job analysis-context <job-id> --root .
+```
+
+Save the skill's JSON-only source-bound draft and publish it after checking the current analysis pointer. Use `missing` for the first analysis or the observed `sha256:` pointer hash for a replacement:
+
+```bash
+pnpm dev job publish-analysis <job-id> ./draft-analysis-revision.json --root . --expected-hash missing
+```
+
+The publisher verifies `source.md`, `source.json` and `raw.json` together, writes `data/jobs/<job-id>/analyses/<analysis-id>.json` create-only, then advances `analyses/current.json`. A failed pointer comparison may leave a valid orphan revision; inspect and recover it explicitly. Legacy jobs without a verified capture or current source-bound analysis return a blocked remediation instead of silently selecting an old artifact.
+
+Publish the candidate profile through the existing explicit confirmation flow. That creates an immutable profile revision, its leaf evidence artifacts and `data/profile/current.json`; the matching context uses exactly that revision and its evidence mapping. Then hand the locked context to `skills/assess-job/SKILL.md`:
+
+```bash
+pnpm dev match context <job-id> --root . [--profile-revision <revision-id>]
+pnpm dev match validate ./draft-assessment.json
+pnpm dev match publish <job-id> ./draft-assessment.json --root . --expected-hash missing
+```
+
+`match validate` checks the assessment structure only. `match publish` rechecks the live capture, analysis, profile revision, evidence IDs, claim paths and hashes before writing `data/jobs/<job-id>/assessments/<assessment-id>.json` and advancing `assessments/current.json`. The read-only dashboard consumes the same local API at `GET /api/jobs/<job-id>/match-context`, `/assessments`, `/assessments/current` and `/assessments/<assessment-id>`.
+
+The skill handoff is local and explicit: the CLI/server validate and persist; the skills propose semantic analysis or assessment JSON. JD text is untrusted data and cannot invoke tools. Vietnamese and English requirements, evidence quotes, HCM/hybrid facts and salary text remain source-bound; `20–30 triệu` without gross/net is a clarification, not a converted amount. Unknown or adjacent experience remains unknown or `candidate-to-confirm`, never a fabricated qualification.
 
 ## Candidate profile and M2 publish
 
@@ -83,6 +113,8 @@ For recovery, copy the workspace before changing artifacts. A malformed or missi
 
 Use `skills/assess-job/SKILL.md` in Codex with one validated `JobAnalysis` and the active profile. It creates a separate decision for that job: `consider`, `clarify`, or `not-ready`; it does not use a fit percentage. A job-specific `cv-draft.md` is created only when the decision recommends it, and never replaces the base profile.
 
+This is the legacy decision/CV workflow. A bounded explainable assessment is read-only evidence and does not create or update a CV. Existing `analysis.json`, `decision.json` and `cv-draft.md` remain compatible artifacts; they are not silently migrated or relabelled as source-bound assessments.
+
 ```bash
 pnpm dev decision validate ./draft-decision.json --out ./data/jobs/<job-id>/decision.json
 ```
@@ -105,11 +137,11 @@ The dashboard uses stable hash URLs, so a reload keeps the selected local screen
 
 - `#overview` — **Tổng quan**, with the next JD to inspect, recent local artifacts, profile summary, and available CV drafts.
 - `#jobs` — **Job descriptions**, the complete readable JD library.
-- `#jobs/<job-id>` — **Chi tiết JD**, including source-derived facts, decision evidence, artifact status, and a job-specific CV draft when one exists.
+- `#jobs/<job-id>` — **Chi tiết JD**, including source-derived facts, the read-only versioned assessment (or blocked/stale/needs-repair state), legacy decision evidence and a job-specific CV draft when one exists.
 - `#profile` — **Hồ sơ cá nhân**, the reusable base profile, M2 confirmation/publish control and local revision history.
 - `#cvs` — **CV theo vị trí**, only JDs that have a local `cv-draft.md` plus its Markdown download.
 - `#new-job` — **Thêm JD mới**, which preserves a pasted source JD locally before any semantic work.
 
 Profile editing remains scoped to one folder at a time. The server validates the complete profile before creating a revision, and the publish flow preserves prior revisions.
 
-The browser does not analyze a JD, send data to an AI provider, embed a chat, scrape jobs, track applications, or create PDF/DOCX files. Semantic analysis and decisions remain explicit Codex/CLI work: use local artifacts and the relevant skill, validate resulting JSON with the CLI, then return to the browser and refresh. Future automation must preserve original source material and stay opt-in.
+The browser does not analyze a JD, send data to an AI provider, embed a chat, scrape jobs, track applications, create PDF/DOCX files, or publish assessments. Semantic analysis and assessments remain explicit skill/CLI work: use local artifacts and the relevant skill, validate resulting JSON with the CLI, publish with an observed pointer token, then return to the browser and refresh. Future automation must preserve original source material and stay opt-in.

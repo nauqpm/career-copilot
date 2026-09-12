@@ -1,6 +1,6 @@
 # 06 — Explainable Matching
 
-**Trạng thái:** Proposed
+**Trạng thái:** Bounded local subset delivered 2026-09-12; the broader capability remains proposed
 **Nền tảng:** [01 — Product scope](01-product-scope.md), [02 — Kiến trúc](02-system-architecture.md), [03 — Mô hình dữ liệu](03-domain-model-and-artifact-contracts.md)
 **Phụ thuộc:** [04 — Profile and evidence](04-profile-and-evidence.md), [05 — Job discovery](05-job-discovery-and-ingestion.md), [11 — Agent orchestration](11-agent-orchestration.md)
 **Quyết định chung:** [00 — Decision log](00-decision-log.md)
@@ -11,6 +11,8 @@
 Cung cấp một đánh giá để ứng viên hiểu **vì sao** nên xem xét, cần làm rõ, hoặc chưa nên theo một JD; không thay ứng viên quyết định và không ngụy trang judgment thành một phần trăm fit. Matching là một snapshot versioned của: job capture/analysis, profile version, preference version, matcher policy và agent/model run.
 
 Kết quả cần hữu ích riêng cho IT tại HCM/Vietnam: technical stack, seniority, evidence thực hành, ngôn ngữ, arrangement/commute, compensation gross/net, working condition (on-call/overtime), employment contract và application constraints.
+
+Phạm vi đã giao chỉ gồm một capture JD đã xác minh, một immutable source-bound analysis revision, một profile revision đã publish cùng evidence, và các immutable assessment revisions dưới policy `m4-v1`. Đây là assessment explainable advisory, không phải matcher scoring engine và không cấp quyền tạo CV, approve, archive hay submit.
 
 ## 2. Nguyên tắc quyết định
 
@@ -25,23 +27,27 @@ Kết quả cần hữu ích riêng cho IT tại HCM/Vietnam: technical stack, s
 
 | Input | Required | Version lock |
 | --- | --- | --- |
-| Canonical job + capture/analysis | Có | `jobId`, `captureId`, `analysisVersion` |
-| Candidate profile | Có | `profileVersionId` |
-| Preferences/constraints | Có thể rỗng | `preferenceVersionId` hoặc embedded profile version |
-| Matcher policy | Có | `policyVersion` |
-| Agent run metadata | Có | agent/model/prompt template checksum, execution time |
+| Verified job capture + source-bound analysis | Có | `jobId`, `captureId`, `analysisId`, capture/source/analysis hashes |
+| Published candidate profile | Có | `profileRevisionId`, exact revision hash, claim-to-evidence mapping |
+| Preferences/constraints | Embedded | Selected profile revision; no separate preference version in this subset |
+| Matcher policy | Có | `policyVersion: "m4-v1"` |
+| Producer/run metadata | Có | skill version, model label, prompt template hash; supplied by the producer |
 
-Nếu analysis invalid, capture missing, profile version không tồn tại hoặc user chưa publish profile, matcher trả `blocked` với remediation cụ thể. Nó không fallback âm thầm sang latest profile hay raw text khác.
+Nếu analysis invalid, capture missing/corrupt, profile revision không tồn tại hoặc user chưa publish profile, context reader trả `blocked` với remediation cụ thể. `blocked` không được persist như một assessment. Nó không fallback âm thầm sang latest profile, legacy `analysis.json`, raw text khác hoặc profile revision khác với revision đã chọn.
 
 ## 4. Kết quả matching
 
 ```ts
 type MatchAssessment = {
+  schemaVersion: 1;
   id: string;
-  jobRef: { jobId: string; captureId: string; analysisVersion: string };
-  profileVersionId: string;
-  policyVersion: string;
-  recommendation: "consider" | "clarify" | "not-ready" | "blocked";
+  createdAt: string;
+  createdBy: { kind: "agent"; role: "match-analyst"; skillVersion: string; model: string; promptHash: string };
+  contentHash: string;
+  jobRef: { jobId: string; captureId: string; captureHash: string; sourceHash: string; analysisId: string; analysisHash: string };
+  profileRef: { revisionId: string; revisionHash: string };
+  policyVersion: "m4-v1";
+  recommendation: "consider" | "clarify" | "not-ready";
   confidence: "high" | "medium" | "low";
   summary: string;
   requirementAssessments: RequirementAssessment[];
@@ -49,11 +55,12 @@ type MatchAssessment = {
   blockers: Finding[];
   questions: Question[];
   anomalies: Finding[];
-  generatedAt: string;
 };
 ```
 
-Mỗi `RequirementAssessment` có requirement quote/location từ JD, modality, verdict và profile evidence IDs. Verdict chỉ là `supported`, `partially-supported`, `not-evidenced`, `unknown`, `conflicting`, `not-applicable`. A reviewer có thể đánh dấu `needs-candidate-confirmation`, nhưng không được tự đổi evidence.
+Mỗi `RequirementAssessment` có requirement quote/location từ JD, modality, verdict và profile evidence IDs. Verdict chỉ là `supported`, `partially-supported`, `not-evidenced`, `unknown`, `conflicting`, `not-applicable`; an optional question records unresolved follow-up without changing evidence.
+
+Trong artifact, requirement quote/location is resolved from the exact source-bound analysis and evidence IDs are checked against the selected profile revision. `supported`, `partially-supported`, `conflicting` and blockers require evidence; `unknown`/`not-evidenced` stay unresolved. Questions identify `candidate` or `employer` ownership. Anomaly text, including prompt-injection-looking JD content, is treated as untrusted data and cannot change tools, permissions or output shape.
 
 `confidence` nói độ đầy đủ/độ rõ của input cho recommendation: `low` khi JD mơ hồ, source missing hoặc nhiều required facts chưa xác minh. Nó không phải confidence năng lực ứng viên.
 
@@ -80,7 +87,7 @@ Hard blocker phải là một declared candidate constraint hoặc an explicit j
 
 ## 6. IT-aware assessment playbook
 
-Matcher policy phải được versioned theo role family, nhưng các mapping chỉ là rule xem xét, không auto-equivalence.
+The delivered global policy identity is `m4-v1`. It enforces structural provenance and modality/evidence rules only. A role-family policy, ontology or semantic matcher remains future work; any mapping below is a review prompt, not auto-equivalence.
 
 | Dimension | Câu hỏi evidence-based | Không được suy ra |
 | --- | --- | --- |
@@ -126,7 +133,7 @@ Job detail presents, in this order:
 2. recommendation and plain-language summary;
 3. requirement table with JD quote, modality, verdict, candidate evidence links, and question;
 4. preference/constraint checks; then blockers/anomalies/questions;
-5. actions: update profile, ask/record answer, create document proposal, archive, rerun against a chosen profile version.
+5. current bounded UI action: read local recovery/remediation guidance and the exact local rerun handoff; later profile/document/archive actions remain proposed.
 
 No action button says “Apply” based only on this result. A result may be exported as a local Markdown/JSON audit artifact but never sent to an employer.
 
@@ -139,11 +146,17 @@ No action button says “Apply” based only on this result. A result may be exp
 - Result contains meaningful HCM/Vietnam checks without parsing speculative salary/location facts.
 - A prompt injection fixture cannot change the permitted agent tools, profile data or recommendation policy.
 
+The bounded implementation is verified by synthetic local fixtures in Vietnamese and English. It proves exact evidence support, Docker not becoming Kubernetes, unresolved missing skills, required/preferred/unknown modality preservation, `20–30 triệu` gross/net clarification, stated HCMC/hybrid facts, prompt-injection anomaly handling, immutable history, stale detection and repair/blocked states. Browser rendering is separately environment-dependent; automated renderer/controller evidence is the fallback when a visible local browser is unavailable.
+
 ## 11. Câu hỏi mở
 
 1. Có cần saved user policy như “không direct report/không startup stage X”, hay để notes trong V1?
 2. Skill ontology có nên dùng dictionary local versioned, hay chỉ string normalization + candidate confirmation trước?
 3. Khi company/role changes materially, dedupe có tạo match mới bắt buộc không? Đề xuất: có.
+
+## 12. Delivered boundaries and explicit deferrals
+
+The local delivery does not execute a provider/model, calculate a score or ranking, infer synonym/technology equivalence, parse or convert salary, geocode commute, create a CV, update a profile, approve/archive an application, call tools from JD text, use a connector, write a database, or submit externally. Legacy artifacts remain readable and are not silently migrated. Saved custom policies, role-family rules, broader analytics and downstream document/application contracts remain proposed follow-up work.
 
 ## Liên kết tiếp theo
 

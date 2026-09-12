@@ -248,6 +248,30 @@ test("requires evidence for positive or conflicting requirement findings and blo
   assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(invalidBlocker)), /blockers.*evidence|evidence.*blocker/i);
 });
 
+test("rejects evidence when a requirement or preference verdict is unresolved", () => {
+  const unresolvedRequirement = assessment();
+  unresolvedRequirement.requirementAssessments[3] = {
+    ...unresolvedRequirement.requirementAssessments[3]!,
+    evidenceIds: ["evidence-english"],
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(unresolvedRequirement)), /cannot cite evidence/i);
+
+  const compatibleWithoutEvidence = assessment();
+  compatibleWithoutEvidence.preferenceChecks[0] = {
+    ...compatibleWithoutEvidence.preferenceChecks[0]!,
+    verdict: "compatible",
+    evidenceIds: [],
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(compatibleWithoutEvidence)), /preferenceChecks.*requires evidence|requires evidence/i);
+
+  const unknownWithEvidence = assessment();
+  unknownWithEvidence.preferenceChecks[1] = {
+    ...unknownWithEvidence.preferenceChecks[1]!,
+    evidenceIds: ["evidence-salary"],
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(unknownWithEvidence)), /cannot cite evidence/i);
+});
+
 test("allows unknown or not-evidenced requirements to remain unresolved with context", () => {
   const parsed = parseMatchAssessment(assessment());
   const unknown = parsed.requirementAssessments.find((entry) => entry.verdict === "unknown");
@@ -315,6 +339,40 @@ test("rejects unsafe references and non-UTC timestamps", () => {
 
   const offset = assessment({ createdAt: "2026-09-12T14:00:00.000+07:00" });
   assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(offset)), /createdAt|UTC/i);
+});
+
+test("rejects malformed nested references and optional fields", () => {
+  const wrongKind = assessment();
+  wrongKind.createdBy = { ...wrongKind.createdBy, kind: "candidate" as never };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(wrongKind)), /createdBy\.kind/i);
+
+  const wrongRole = assessment();
+  wrongRole.createdBy = { ...wrongRole.createdBy, role: "job-analyst" as never };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(wrongRole)), /createdBy\.role/i);
+
+  const badJobId = assessment();
+  badJobId.jobRef = { ...badJobId.jobRef, jobId: "../outside" };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(badJobId)), /jobRef\.jobId|safe/i);
+
+  const badCaptureHash = assessment();
+  badCaptureHash.jobRef = { ...badCaptureHash.jobRef, captureHash: "not-a-hash" };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(badCaptureHash)), /captureHash|SHA/i);
+
+  const badProfileId = assessment();
+  badProfileId.profileRef = { ...badProfileId.profileRef, revisionId: "../outside" };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(badProfileId)), /revisionId|safe/i);
+
+  const badEvidenceList = assessment();
+  badEvidenceList.requirementAssessments[0] = { ...badEvidenceList.requirementAssessments[0]!, evidenceIds: "evidence-node" as never };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(badEvidenceList)), /evidenceIds.*array/i);
+
+  const badBlockerCode = assessment();
+  badBlockerCode.blockers[0] = { ...badBlockerCode.blockers[0]!, code: "../outside" };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(badBlockerCode)), /code|safe/i);
+
+  const badQuestionReference = assessment();
+  badQuestionReference.questions[1] = { ...badQuestionReference.questions[1]!, requirementId: "../outside" };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(badQuestionReference)), /requirementId|safe/i);
 });
 
 function withContentHashWithoutStaleHash(value: MatchAssessment): MatchAssessment {

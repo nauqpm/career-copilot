@@ -9,10 +9,12 @@ import { runCli, type CliIo } from "../src/cli.js";
 import { createWorkspaceServer } from "../src/web/server.js";
 import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
+import { readMatchContext } from "../src/match/context.js";
 import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
-import { readCurrentMatch, saveMatchAssessment } from "../src/match/storage.js";
+import { assessmentFreshness, readCurrentMatch, saveMatchAssessment } from "../src/match/storage.js";
 import { createLocalJob } from "../src/workspace/storage.js";
 import { contentHash, readArtifact } from "../src/workspace/artifacts.js";
+import { renderJobDetail } from "../public/render.js";
 
 const source = [
   "Backend Engineer",
@@ -192,6 +194,84 @@ test("match publish preserves the active pointer when its expected hash conflict
   assert.equal(await readFile(join(state.directory, "assessments", "current.json"), "utf8"), pointerBytes);
   assert.equal((await readCurrentMatch(state.root, state.job.id))?.assessment.id, before.assessment.id);
   assert.doesNotMatch(secondIo.stderr.join(""), new RegExp(state.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("synthetic matching flow preserves prior artifacts through UI read, staleness, and replacement", async () => {
+  const state = await fixture();
+  const immutablePaths = [
+    join(state.directory, "source.md"),
+    join(state.directory, "source.json"),
+    join(state.directory, "raw.json"),
+    join(state.directory, "analyses", `${state.analysis.revision.id}.json`),
+    join(state.directory, "analyses", "current.json"),
+    join(state.root, "data", "profile", "revisions", `${state.publishedProfile.revision.id}.json`),
+    join(state.root, "data", "profile", "evidence", `${state.evidenceId}.json`),
+  ];
+  const originalBytes = new Map(immutablePaths.map((path) => [path, readFile(path, "utf8")]));
+  const bytes = new Map<string, string>();
+  for (const [path, pending] of originalBytes) bytes.set(path, await pending);
+
+  const context = await readMatchContext(state.root, state.job.id, state.publishedProfile.revision.id);
+  assert.equal(context.status, "ready");
+  if (context.status !== "ready") return;
+  assert.equal(context.analysisHash, state.analysis.revisionHash);
+  assert.equal(context.profileRevisionHash, state.publishedProfile.revisionHash);
+
+  const firstAssessmentPath = join(state.root, "assessment-flow-one.json");
+  await writeFile(firstAssessmentPath, `${JSON.stringify(assessmentFor(state), null, 2)}\n`, "utf8");
+  const validateIo = io();
+  assert.equal(await runCli(["match", "validate", firstAssessmentPath], validateIo.value), 0);
+  assert.equal((JSON.parse(validateIo.stdout.join("")) as MatchAssessment).id, "assessment-one");
+  assert.equal(await readArtifact(join(state.directory, "assessments", "current.json")), undefined);
+
+  const publishIo = io();
+  assert.equal(await runCli(["match", "publish", state.job.id, firstAssessmentPath, "--root", state.root, "--expected-hash", "missing"], publishIo.value), 0);
+  const firstPublish = JSON.parse(publishIo.stdout.join("")) as { pointerHash: string };
+  const firstAssessmentPathOnDisk = join(state.directory, "assessments", "assessment-one.json");
+  const firstAssessmentBytes = await readFile(firstAssessmentPathOnDisk, "utf8");
+
+  const app = await startTestServer(state.root);
+  try {
+    const currentResponse = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/current`);
+    assert.equal(currentResponse.status, 200);
+    const currentPayload = await currentResponse.json() as { assessment: MatchAssessment; freshness: { stale: boolean; reasons: string[] } };
+    assert.equal(currentPayload.assessment.id, "assessment-one");
+    assert.deepEqual(currentPayload.freshness, { stale: false, reasons: [] });
+
+    const detailResponse = await fetch(`${app.url}/api/jobs/${state.job.id}`);
+    assert.equal(detailResponse.status, 200);
+    const detail = await detailResponse.json() as Record<string, unknown>;
+    const rendered = renderJobDetail(detail, "", undefined, {}, undefined, currentPayload);
+    assert.match(rendered, /Đánh giá phiên bản/);
+    assert.match(rendered, /Build Node\.js services\./);
+    assert.match(rendered, /Node\.js/);
+  } finally {
+    await app.close();
+  }
+
+  const nextProfile = await publishProfileRevision(
+    state.root,
+    { ...profile, headline: "Platform engineer" },
+    state.publishedProfile.revisionHash,
+    { confirmed: true },
+  );
+  const stale = await assessmentFreshness(state.root, assessmentFor(state));
+  assert.equal(stale.stale, true);
+  assert.ok(stale.reasons.some((reason) => /profile/i.test(reason)));
+
+  const replacementBase = { ...assessmentFor(state, "assessment-two"), profileRef: { revisionId: nextProfile.revision.id, revisionHash: nextProfile.revisionHash } };
+  const { contentHash: _ignored, ...replacementWithoutHash } = replacementBase;
+  const replacement = { ...replacementWithoutHash, contentHash: hashMatchAssessment(replacementWithoutHash) };
+  const replacementPath = join(state.root, "assessment-flow-two.json");
+  await writeFile(replacementPath, `${JSON.stringify(replacement, null, 2)}\n`, "utf8");
+  const replacementValidateIo = io();
+  assert.equal(await runCli(["match", "validate", replacementPath], replacementValidateIo.value), 0);
+  const replacementPublishIo = io();
+  assert.equal(await runCli(["match", "publish", state.job.id, replacementPath, "--root", state.root, "--expected-hash", firstPublish.pointerHash], replacementPublishIo.value), 0);
+  assert.equal((await readCurrentMatch(state.root, state.job.id))?.assessment.id, "assessment-two");
+
+  for (const [path, expected] of bytes) assert.equal(await readFile(path, "utf8"), expected, path);
+  assert.equal(await readFile(firstAssessmentPathOnDisk, "utf8"), firstAssessmentBytes);
 });
 
 test("assessment read APIs expose quoted pointer/artifact ETags and freshness", async () => {

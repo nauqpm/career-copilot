@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,7 +8,7 @@ import { contentHash, readArtifact } from "../src/workspace/artifacts.js";
 import { createLocalJob } from "../src/workspace/storage.js";
 import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
-import { readMatchContext } from "../src/match/context.js";
+import { readExactMatchAnalysis, readMatchContext, readProfileEvidence, readVerifiedMatchCapture } from "../src/match/context.js";
 import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
 import { saveMatchAssessment } from "../src/match/storage.js";
 
@@ -179,4 +179,50 @@ test("blocks corrupt captures and corrupt referenced evidence with actionable re
   const corruptEvidence = await readMatchContext(healthy.root, healthy.job.id);
   assert.equal(corruptEvidence.status, "blocked");
   if (corruptEvidence.status === "blocked") assert.ok(corruptEvidence.remediation.some((item) => /evidence|profile/i.test(`${item.code} ${item.message}`)));
+});
+
+test("fails closed for direct capture, analysis and evidence binding errors", async () => {
+  const invalidRaw = await fixture();
+  await writeFile(join(invalidRaw.directory, "raw.json"), "{}\n", "utf8");
+  await assert.rejects(readVerifiedMatchCapture(invalidRaw.root, invalidRaw.job.id), /capture binding/i);
+
+  const mismatchedRaw = await fixture();
+  const mismatchedRawPath = join(mismatchedRaw.directory, "raw.json");
+  const raw = JSON.parse(await readFile(mismatchedRawPath, "utf8")) as { capture: { id: string } };
+  raw.capture.id = "other-job";
+  await writeFile(mismatchedRawPath, `${JSON.stringify(raw)}\n`, "utf8");
+  await assert.rejects(readVerifiedMatchCapture(mismatchedRaw.root, mismatchedRaw.job.id), /capture/i);
+
+  const wrongSourceMetadata = await fixture();
+  const wrongSourcePath = join(wrongSourceMetadata.directory, "raw.json");
+  const wrongSourceRaw = JSON.parse(await readFile(wrongSourcePath, "utf8")) as { source: { value: string } };
+  wrongSourceRaw.source.value = "different source metadata";
+  await writeFile(wrongSourcePath, `${JSON.stringify(wrongSourceRaw)}\n`, "utf8");
+  await assert.rejects(readVerifiedMatchCapture(wrongSourceMetadata.root, wrongSourceMetadata.job.id), /source metadata/i);
+
+  const invalidAnalysis = await fixture();
+  await writeFile(join(invalidAnalysis.directory, "analyses", "analysis-one.json"), "{broken", "utf8");
+  await assert.rejects(readExactMatchAnalysis(invalidAnalysis.root, invalidAnalysis.job.id, "analysis-one"), /analysis revision/i);
+
+  const mismatchedAnalysis = await fixture();
+  const analysisPath = join(mismatchedAnalysis.directory, "analyses", "analysis-one.json");
+  const analysisValue = JSON.parse(await readFile(analysisPath, "utf8")) as Record<string, unknown>;
+  analysisValue.capture = { ...(analysisValue.capture as Record<string, unknown>), manifestHash: hash("different manifest") };
+  const { contentHash: _ignored, ...analysisWithoutHash } = analysisValue;
+  analysisValue.contentHash = hash(JSON.stringify(analysisWithoutHash));
+  await writeFile(analysisPath, `${JSON.stringify(analysisValue)}\n`, "utf8");
+  await assert.rejects(readExactMatchAnalysis(mismatchedAnalysis.root, mismatchedAnalysis.job.id, "analysis-one"), /capture|manifest/i);
+
+  const invalidProfileId = await fixture();
+  await assert.rejects(readMatchContext(invalidProfileId.root, invalidProfileId.job.id, "../outside"), /profile revision ID/i);
+
+  const wrongEvidence = await fixture();
+  const evidenceId = wrongEvidence.publishedProfile.revision.claimEvidence[0]!.evidenceIds[0]!;
+  const evidencePath = join(wrongEvidence.root, "data", "profile", "evidence", `${evidenceId}.json`);
+  const evidenceValue = JSON.parse(await readFile(evidencePath, "utf8")) as Record<string, unknown>;
+  evidenceValue.id = "different-evidence";
+  const { contentHash: _ignoredEvidenceHash, ...evidenceWithoutHash } = evidenceValue;
+  evidenceValue.contentHash = hash(JSON.stringify(evidenceWithoutHash));
+  await writeFile(evidencePath, `${JSON.stringify(evidenceValue)}\n`, "utf8");
+  await assert.rejects(readProfileEvidence(wrongEvidence.root, wrongEvidence.publishedProfile.revision), /evidence.*ID|filename/i);
 });

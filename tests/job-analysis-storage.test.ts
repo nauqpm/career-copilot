@@ -170,6 +170,9 @@ test("fails closed for corrupted and dangling current pointers", async () => {
   await writeFile(pointerPath, "{broken", "utf8");
   await assert.rejects(readCurrentAnalysis(state.root, state.job.id), /pointer/i);
 
+  await writeFile(pointerPath, JSON.stringify({ schemaVersion: 1, revisionId: "current", revisionHash: hash("invalid") }) + "\n", "utf8");
+  await assert.rejects(readCurrentAnalysis(state.root, state.job.id), /pointer/i);
+
   await writeFile(pointerPath, JSON.stringify({ schemaVersion: 1, revisionId: "analysis-missing", revisionHash: hash("missing") }) + "\n", "utf8");
   await assert.rejects(readCurrentAnalysis(state.root, state.job.id), /missing|changed|revision/i);
 });
@@ -241,6 +244,113 @@ test("refuses a changed source manifest and a tampered raw capture binding", asy
     publishAnalysisRevision(tamperedRaw.root, tamperedRaw.job.id, tamperedRaw.draft("analysis-tampered-raw"), null),
     /raw\.json|capture/i,
   );
+});
+
+test("covers empty history and malformed capture or revision branches without fallback", async () => {
+  const empty = await fixture();
+  assert.deepEqual(await readAnalysisHistory(empty.root, empty.job.id), { revisions: [] });
+  await assert.rejects(
+    publishAnalysisRevision(empty.root, empty.job.id, empty.draft("analysis-invalid-token"), "not-a-hash"),
+    /pointer hash/i,
+  );
+
+  const malformedManifest = await fixture();
+  await writeFile(join(malformedManifest.directory, "source.json"), "{broken", "utf8");
+  await assert.rejects(
+    publishAnalysisRevision(malformedManifest.root, malformedManifest.job.id, malformedManifest.draft("analysis-malformed-manifest"), null),
+    /manifest|capture/i,
+  );
+
+  const missingRaw = await fixture();
+  await unlink(join(missingRaw.directory, "raw.json"));
+  await assert.rejects(
+    publishAnalysisRevision(missingRaw.root, missingRaw.job.id, missingRaw.draft("analysis-missing-raw"), null),
+    /raw|capture/i,
+  );
+
+  const malformedRaw = await fixture();
+  await writeFile(join(malformedRaw.directory, "raw.json"), "{broken", "utf8");
+  await assert.rejects(
+    publishAnalysisRevision(malformedRaw.root, malformedRaw.job.id, malformedRaw.draft("analysis-malformed-raw"), null),
+    /raw|capture/i,
+  );
+
+  const invalidRawShape = await fixture();
+  await writeFile(join(invalidRawShape.directory, "raw.json"), "{}\n", "utf8");
+  await assert.rejects(
+    publishAnalysisRevision(invalidRawShape.root, invalidRawShape.job.id, invalidRawShape.draft("analysis-invalid-raw-shape"), null),
+    /raw|capture/i,
+  );
+
+  const wrongSourceMetadata = await fixture();
+  const rawPath = join(wrongSourceMetadata.directory, "raw.json");
+  const raw = JSON.parse(await readFile(rawPath, "utf8")) as { source: { value: string } };
+  raw.source.value = "not the captured source";
+  await writeFile(rawPath, `${JSON.stringify(raw)}\n`, "utf8");
+  await assert.rejects(
+    publishAnalysisRevision(wrongSourceMetadata.root, wrongSourceMetadata.job.id, wrongSourceMetadata.draft("analysis-wrong-source-metadata"), null),
+    /source metadata|capture/i,
+  );
+
+  const wrongManifestId = await fixture();
+  const manifestPath = join(wrongManifestId.directory, "source.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+  manifest.id = "other-job";
+  const { contentHash: _ignoredManifestHash, ...manifestWithoutHash } = manifest;
+  manifest.contentHash = hash(JSON.stringify(manifestWithoutHash));
+  await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, "utf8");
+  await assert.rejects(
+    publishAnalysisRevision(wrongManifestId.root, wrongManifestId.job.id, wrongManifestId.draft("analysis-wrong-manifest-id"), null),
+    /manifest.*ID|capture/i,
+  );
+
+  const wrongRevisionBindings = await fixture();
+  await publishAnalysisRevision(wrongRevisionBindings.root, wrongRevisionBindings.job.id, wrongRevisionBindings.draft("analysis-binding"), null);
+  const revisionPath = join(wrongRevisionBindings.directory, "analyses", "analysis-binding.json");
+  const stored = JSON.parse(await readFile(revisionPath, "utf8")) as Record<string, unknown>;
+  stored.jobId = "other-job";
+  const { contentHash: _ignoredRevisionHash, ...revisionWithoutHash } = stored;
+  stored.contentHash = hash(JSON.stringify(revisionWithoutHash));
+  await writeFile(revisionPath, `${JSON.stringify(stored)}\n`, "utf8");
+  const bindingRevisionHash = (await readArtifact(revisionPath))!.hash;
+  await writeFile(
+    join(wrongRevisionBindings.directory, "analyses", "current.json"),
+    `${JSON.stringify({ schemaVersion: 1, revisionId: "analysis-binding", revisionHash: bindingRevisionHash })}\n`,
+    "utf8",
+  );
+  await assert.rejects(readCurrentAnalysis(wrongRevisionBindings.root, wrongRevisionBindings.job.id), /binding|job/i);
+
+  const wrongRevisionManifest = await fixture();
+  await publishAnalysisRevision(wrongRevisionManifest.root, wrongRevisionManifest.job.id, wrongRevisionManifest.draft("analysis-manifest-binding"), null);
+  const manifestRevisionPath = join(wrongRevisionManifest.directory, "analyses", "analysis-manifest-binding.json");
+  const manifestRevision = JSON.parse(await readFile(manifestRevisionPath, "utf8")) as Record<string, unknown>;
+  manifestRevision.capture = { ...(manifestRevision.capture as Record<string, unknown>), manifestHash: hash("other-manifest") };
+  const { contentHash: _ignoredRevisionManifestHash, ...revisionManifestWithoutHash } = manifestRevision;
+  manifestRevision.contentHash = hash(JSON.stringify(revisionManifestWithoutHash));
+  await writeFile(manifestRevisionPath, `${JSON.stringify(manifestRevision)}\n`, "utf8");
+  const manifestRevisionHash = (await readArtifact(manifestRevisionPath))!.hash;
+  await writeFile(
+    join(wrongRevisionManifest.directory, "analyses", "current.json"),
+    `${JSON.stringify({ schemaVersion: 1, revisionId: "analysis-manifest-binding", revisionHash: manifestRevisionHash })}\n`,
+    "utf8",
+  );
+  await assert.rejects(readCurrentAnalysis(wrongRevisionManifest.root, wrongRevisionManifest.job.id), /manifest.*source|manifest/i);
+
+  const wrongRevisionSource = await fixture();
+  await publishAnalysisRevision(wrongRevisionSource.root, wrongRevisionSource.job.id, wrongRevisionSource.draft("analysis-source-binding"), null);
+  const sourceRevisionPath = join(wrongRevisionSource.directory, "analyses", "analysis-source-binding.json");
+  const sourceRevision = JSON.parse(await readFile(sourceRevisionPath, "utf8")) as Record<string, unknown>;
+  sourceRevision.capture = { ...(sourceRevision.capture as Record<string, unknown>), sourceHash: hash("other-source") };
+  const { contentHash: _ignoredRevisionSourceHash, ...revisionSourceWithoutHash } = sourceRevision;
+  sourceRevision.contentHash = hash(JSON.stringify(revisionSourceWithoutHash));
+  await writeFile(sourceRevisionPath, `${JSON.stringify(sourceRevision)}\n`, "utf8");
+  const sourceRevisionHash = (await readArtifact(sourceRevisionPath))!.hash;
+  await writeFile(
+    join(wrongRevisionSource.directory, "analyses", "current.json"),
+    `${JSON.stringify({ schemaVersion: 1, revisionId: "analysis-source-binding", revisionHash: sourceRevisionHash })}\n`,
+    "utf8",
+  );
+  await assert.rejects(readCurrentAnalysis(wrongRevisionSource.root, wrongRevisionSource.job.id), /source/i);
 });
 
 test("CLI emits only source-bound context and publishes without model execution", async () => {

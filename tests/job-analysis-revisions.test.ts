@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { serializeJobAnalysisRevision, parseJobAnalysisRevision } from "../src/job/analysis-revisions.js";
+import { hashJobAnalysisRevision, serializeJobAnalysisRevision, parseJobAnalysisRevision } from "../src/job/analysis-revisions.js";
 
 const source = [
   "Backend Engineer / Kỹ sư Backend",
@@ -114,6 +114,8 @@ test("parses a source-bound Vietnamese/English analysis and verifies its envelop
   }
   assert.equal(parsed.analysis.requirements[0]?.source.quote, "At least 3 years of Node.js experience.");
   assert.equal(JSON.parse(serializeJobAnalysisRevision(parsed)).contentHash, parsed.contentHash);
+  const { contentHash: _ignored, ...withoutHash } = parsed;
+  assert.equal(hashJobAnalysisRevision(withoutHash), parsed.contentHash);
 });
 
 test("rejects forbidden scores and duplicate requirement IDs", () => {
@@ -158,4 +160,21 @@ test("requires truthful model and prompt metadata", () => {
 
   const missingPromptHash = revision({ createdBy: { ...revision().createdBy, promptHash: "" } });
   assert.throws(() => parseJobAnalysisRevision(missingPromptHash, source), /promptHash/);
+});
+
+test("rejects missing requirement metadata, invalid creators, and changed envelope hashes", () => {
+  const missingId = revision();
+  delete (missingId.analysis.requirements[0] as Record<string, unknown>).id;
+  assert.throws(() => parseJobAnalysisRevision(withRevisionHash(missingId), source), /requirement.*id/i);
+
+  const missingLocator = revision();
+  delete (missingLocator.analysis.requirements[0] as Record<string, unknown>).source;
+  assert.throws(() => parseJobAnalysisRevision(withRevisionHash(missingLocator), source), /locator/i);
+
+  const wrongCreator = revision({ createdBy: { ...revision().createdBy, role: "other" } });
+  assert.throws(() => parseJobAnalysisRevision(wrongCreator, source), /createdBy|job-analyst/i);
+
+  const changedHash = revision();
+  changedHash.contentHash = hash("changed revision");
+  assert.throws(() => parseJobAnalysisRevision(changedHash, source), /contentHash/i);
 });

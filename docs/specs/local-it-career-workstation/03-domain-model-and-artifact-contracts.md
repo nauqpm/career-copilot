@@ -1,6 +1,6 @@
 # 03 — Domain model and artifact contracts
 
-> **Status:** Proposed overall; M3.1 capture and M3.3 review subsets delivered on the implementation branches
+> **Status:** Proposed overall; M3.1 capture, M3.3 review, and the bounded explainable-matching subset delivered 2026-09-12; later document/application contracts remain proposed
 > **Related:** [product scope](01-product-scope.md), [system architecture](02-system-architecture.md), [Vietnam IT localisation](18-vietnam-it-market-localization.md), [roadmap](19-roadmap-and-milestones.md)
 
 ## 1. Purpose and language
@@ -68,7 +68,9 @@ data/
     source.json                     # provenance, origin, retrieval, hash
     raw.json                        # normalised text/metadata
     analyses/<analysis-id>.json
+    analyses/current.json            # hash-checked current analysis pointer
     assessments/<assessment-id>.json
+    assessments/current.json         # hash-checked current assessment pointer
     notes.md                        # candidate-authored notes, versioned on save
   opportunities/<opportunity-id>.json
   documents/<document-id>/revisions/<document-revision-id>.md
@@ -174,11 +176,19 @@ Candidate-reviewed pair decisions are stored as complete immutable revisions und
 
 The existing job detail route reads the opportunity view alongside the JD. It keeps group members as links to their independent source records, labels exact-content and conservative same-URL matches as advisory hints, and keeps saved `different`/`defer`/`clear` pair decisions visible. A candidate can choose a peer and relation (`same`, `different`, `defer`, `clear`) only when the view is healthy; saving requires a confirmation tied to the two IDs, relation, loaded pointer hash and current component membership. The API uses `If-Match`, rejects stale state with `409`, and the UI clears confirmation rather than retrying. A repair marker is read-only and never triggers external fetch or submission.
 
+### Delivered bounded explainable-matching subset
+
+The local implementation now supports one verified captured job, one immutable source-bound analysis revision, one explicitly selected or current published profile revision, and immutable evidence-linked assessment revisions. Analysis artifacts live under `data/jobs/<job-id>/analyses/`; assessment artifacts live under `data/jobs/<job-id>/assessments/`. Each stream has a create-only artifact and a hash-checked `current.json` pointer. A stale pointer can leave a valid orphan revision, while the previous current pointer remains unchanged; history reports only validated revisions and preserves malformed or mismatched files for repair inspection.
+
+The source-bound analysis envelope retains `jobId`, capture ID/manifest hash/source hash, truthful producer metadata, an envelope hash, and unique requirement IDs. Every requirement has a JavaScript string-offset locator whose quote must equal the exact `source.md` slice. `analysis.json` remains a readable legacy artifact but cannot be selected as this flow's analysis input. The assessment envelope binds the exact capture, analysis revision, profile revision and `m4-v1` policy; every requirement assessment preserves `required`, `preferred` or `unknown` modality and cites existing profile evidence IDs when it claims support or conflict. `blocked` is a preflight result, not a persisted assessment.
+
+The CLI/server validate these bindings and use local files only. A published profile revision carries the preference and claim-to-evidence mapping used by the assessment; there is no separate preference version in this subset. A changed profile, analysis, policy, or source capture makes a prior assessment stale with an explicit reason; a corrupt or missing capture/current pointer/evidence returns a repair state. Legacy profile, analysis and decision files are never silently migrated, overwritten or relabelled.
+
 ## 7. Explainable analysis, assessment, and document contracts
 
 ### 7.1 Job analysis
 
-`JobAnalysis` continues to capture title, company, seniority, requirements, responsibilities, employment details, compensation, application details, conditions, and opportunities. A future version MUST additionally link each material extracted field to a source locator or mark it `not-stated`/`uncertain`.
+`JobAnalysis` continues to capture title, company, seniority, requirements, responsibilities, employment details, compensation, application details, conditions, and opportunities. The legacy flat shape remains compatible for existing commands, but the delivered matching path uses a `JobAnalysisRevision` envelope that binds one analysis to one verified capture. Each material requirement has a locally generated safe ID and an exact locator `{ start, end, quote }` into the preserved `source.md`; there is no fuzzy quote lookup or byte-offset conversion. Producer metadata (`skillVersion`, `model`, and `promptHash`) is required and is copied without invention by the validator.
 
 It MUST preserve these distinctions:
 
@@ -189,39 +199,34 @@ It MUST preserve these distinctions:
 
 ### 7.2 Match assessment
 
-The existing `JobDecision` is a compatible first assessment. The target contract replaces a flat decision with an evidence-led assessment while preserving `consider`, `clarify`, and `not-ready` as human-readable dispositions.
+The existing `JobDecision` remains a compatible legacy assessment. The delivered bounded path adds a `MatchAssessment` that preserves `consider`, `clarify`, and `not-ready` as advisory dispositions while binding exact source, analysis, profile and policy hashes:
 
-```json
-{
-  "schemaVersion": 1,
-  "id": "assessment-01jexample",
-  "createdAt": "2026-08-31T05:20:00Z",
-  "createdBy": { "kind": "agent", "role": "match-analyst", "skillVersion": "1" },
-  "contentHash": "sha256:...",
-  "jobAnalysisId": "analysis-01jexample",
-  "jobAnalysisHash": "sha256:...",
-  "profileRevisionId": "profile-rev-01jexample",
-  "profileRevisionHash": "sha256:...",
-  "disposition": "clarify",
-  "summary": "Role aligns with backend experience but the expected English level is not evidenced.",
-  "evidence": [
-    {
-      "kind": "match",
-      "topic": "Backend service experience",
-      "jobReference": "requirements[2]",
-      "profileEvidenceIds": ["evidence-01jexample"],
-      "finding": "Candidate evidence supports the stated requirement.",
-      "confidence": "high"
-    }
-  ],
-  "gaps": [],
-  "blockers": [],
-  "questions": ["Confirm whether professional English communication experience is available."],
-  "recommendation": { "documentDraft": "hold", "reason": "Clarify English requirement first." }
-}
+```ts
+type MatchAssessment = {
+  schemaVersion: 1;
+  id: string;
+  createdAt: string;
+  createdBy: { kind: "agent"; role: "match-analyst"; skillVersion: string; model: string; promptHash: string };
+  contentHash: string;
+  jobRef: { jobId: string; captureId: string; captureHash: string; sourceHash: string; analysisId: string; analysisHash: string };
+  profileRef: { revisionId: string; revisionHash: string };
+  policyVersion: "m4-v1";
+  recommendation: "consider" | "clarify" | "not-ready";
+  confidence: "high" | "medium" | "low";
+  summary: string;
+  requirementAssessments: RequirementAssessment[];
+  preferenceChecks: PreferenceCheck[];
+  blockers: Finding[];
+  questions: Question[];
+  anomalies: Finding[];
+};
 ```
 
+`RequirementAssessment` keeps the source requirement ID, modality, verdict, explanation and profile evidence IDs. Positive/partial/conflicting verdicts and persisted blockers require evidence; unknown/not-evidenced results remain explicit and do not become negative claims. Questions identify `candidate` or `employer` ownership. The structural `m4-v1` policy does not perform semantic matching, score or ranking, synonym expansion, salary conversion or geocoding.
+
 Assessment evidence MUST identify a job requirement/fact and a profile evidence item when claiming a match. A gap may state that no matching evidence exists; it MUST NOT become a negative claim about the candidate. A blocker is reserved for a stated hard constraint or candidate-declared non-negotiable. Confidence describes evidence completeness, not employability probability.
+
+Assessment freshness is read at display time. The current implementation reports policy-version change, newer analysis, newer profile revision, unpublished/repair-marked analysis or profile, and changed/repair-marked capture/source bytes. It never rewrites an old assessment. The local skill handoff reads `skills/analyze-job/SKILL.md` and `skills/assess-job/SKILL.md`; skills produce JSON proposals, while the CLI/server own validation, persistence and read-only API/UI presentation. CV generation, profile edits, approvals, connectors, database storage and external submission are outside this subset.
 
 ### 7.3 Document revision and grounding review
 

@@ -43,7 +43,7 @@ pnpm audit --audit-level=high
 git diff --check
 ```
 
-Node 20.19.0 was used. Sandbox Node startup initially failed with EPERM while resolving C:\Users\quanp; verification then ran successfully with approved execution outside the sandbox.
+Node 20.19.0 was used. Sandbox Node startup initially failed with EPERM while resolving the Windows user-profile directory; verification then ran successfully with approved execution outside the sandbox.
 
 ## Browser evidence and limits
 
@@ -240,7 +240,7 @@ pnpm exec tsx --test tests/match-context.test.ts tests/match-storage.test.ts
 .\node_modules\.bin\tsx.CMD --test tests/match-context.test.ts tests/match-storage.test.ts
 ```
 
-The package wrapper could not resolve `tsx` in this restricted Windows shell, and the sandboxed local invocation hit the known Node `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` startup boundary. The equivalent local-bin run with authorized Node path resolution then failed as intended before production modules existed: **2 test files failed, 0 passed**, with `ERR_MODULE_NOT_FOUND` for `src/match/context.js` and `src/match/storage.js`.
+The package wrapper could not resolve `tsx` in this restricted Windows shell, and the sandboxed local invocation hit the known Node user-profile `lstat` startup boundary (`EPERM: operation not permitted`). The equivalent local-bin run with authorized Node path resolution then failed as intended before production modules existed: **2 test files failed, 0 passed**, with `ERR_MODULE_NOT_FOUND` for `src/match/context.js` and `src/match/storage.js`.
 
 ### GREEN and regression evidence
 
@@ -303,7 +303,7 @@ pnpm exec tsx --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
 .\node_modules\.bin\tsx.CMD --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
 ```
 
-The package wrapper could not resolve the local `tsx` executable and the sandboxed local-bin invocation hit the known Node `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` startup boundary. The equivalent local-bin run with authorized Windows path resolution then failed as intended before the Task 5 implementation: **25 tests ran, 19 passed, 6 failed**, with the six new CLI/API expectations returning the pre-existing command/route failures.
+The package wrapper could not resolve the local `tsx` executable and the sandboxed local-bin invocation hit the known Node user-profile `lstat` startup boundary (`EPERM: operation not permitted`). The equivalent local-bin run with authorized Windows path resolution then failed as intended before the Task 5 implementation: **25 tests ran, 19 passed, 6 failed**, with the six new CLI/API expectations returning the pre-existing command/route failures.
 
 ### GREEN and compatibility evidence
 
@@ -352,7 +352,7 @@ pnpm audit --audit-level=high
 - `git diff --check`: **passed**.
 - `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
 
-The direct sandboxed Node launcher remains blocked by the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` boundary, so the authorized local runtime supplied the test evidence. Unrelated untracked artifacts were preserved.
+The direct sandboxed Node launcher remains blocked by the known Windows user-profile `lstat` boundary (`EPERM: operation not permitted`), so the authorized local runtime supplied the test evidence. Unrelated untracked artifacts were preserved.
 
 ## Task 5 round-2 fix — cover assessment preflight states (2026-09-12)
 
@@ -382,7 +382,7 @@ pnpm audit --audit-level=high
 - `git diff --check`: **passed**.
 - `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
 
-The direct sandboxed Node launcher remains blocked by the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` boundary; authorized local runtime evidence was used. Unrelated untracked artifacts remain preserved.
+The direct sandboxed Node launcher remains blocked by the known Windows user-profile `lstat` boundary (`EPERM: operation not permitted`); authorized local runtime evidence was used. Unrelated untracked artifacts remain preserved.
 
 ## Task 6 — explainable matching UI (2026-09-12)
 
@@ -390,7 +390,7 @@ The existing job-detail page now presents the read-only M4 assessment in evidenc
 
 ### Task 6 RED/GREEN evidence
 
-The initial `pnpm exec tsx --test tests/opportunity-ui.test.ts tests/web-smoke.test.ts tests/m4-matching-flow.test.ts` wrapper could not resolve local `tsx`; the equivalent sandboxed local-bin invocation hit the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` startup boundary. The authorized local-bin run then reproduced the expected missing-assessment UI failures before implementation. Final authorized checks:
+The initial `pnpm exec tsx --test tests/opportunity-ui.test.ts tests/web-smoke.test.ts tests/m4-matching-flow.test.ts` wrapper could not resolve local `tsx`; the equivalent sandboxed local-bin invocation hit the known Windows user-profile `lstat` startup boundary (`EPERM: operation not permitted`). The authorized local-bin run then reproduced the expected missing-assessment UI failures before implementation. Final authorized checks:
 
 - Focused Task 6/UI/API suite: **81 passed, 0 failed, 0 skipped**.
 - Complete test tree: **276 passed, 0 failed, 0 skipped**.
@@ -425,3 +425,37 @@ pnpm audit --audit-level=high
 - Dependency audit: **no known vulnerabilities found**.
 
 Unrelated untracked M3 review artifacts remain preserved. See `.superpowers/sdd/2026-09-12-m4-explainable-matching/task-6-report.md` for the detailed fix record.
+
+## Explainable matching release gate (2026-09-12)
+
+The bounded local delivery is complete: one verified JD capture can receive a source-bound immutable analysis, one published profile revision supplies immutable evidence and preferences, and a read-only assessment can be validated, published, inspected, marked stale and replaced without rewriting prior immutable bytes. The CLI/server and dashboard remain local-only; the skills propose JSON and never execute a provider, call tools from JD text, create a CV, mutate a profile, approve an application or submit externally.
+
+### Task and review-fix lineage
+
+Every implementation task and review fix before this documentation commit is present on `feature/explainable-matching`:
+
+- Task 1: `337bcd3` source-bound analysis revisions; `a32e6bc` strict UTC timestamp validation.
+- Task 2: `d56995e` immutable analysis history; `cde0ebf` reserved-ID, filename, manifest-integrity and filesystem-error hardening.
+- Task 3: `cf5ba48` evidence-linked assessment schema/policy; `1f8a03f` evidence-ID namespace, producer metadata and coverage fixes.
+- Task 4: `8bd8172` locked context/assessment snapshots; `f5e279f` exact analysis/profile hash bindings.
+- Task 5: `3c13978` local assessment workflow; `78514d7` repair-state and safe-ID classification; `acb1464` preflight/capture route regressions.
+- Task 6: `dae5041` read-only job-detail assessment UI; `1039778` historical evidence-context isolation, repair labelling and keyboard-scroll fixes.
+- Task 7 extends the existing acceptance test, registers all six analysis/matching suites and updates the delivery documentation in this commit.
+
+### Fresh final verification
+
+| Gate | Evidence |
+| --- | --- |
+| `npm test` | **285 passed, 0 failed, 0 skipped** |
+| `npm run build` | **passed** (`tsc`) |
+| Node built-in coverage over every registered test file | **285 passed, 0 failed, 0 skipped**; all new analysis/matching modules exceed 80% line/statement proxy, branch and function metrics |
+| `git diff --check` | **passed**; only LF/CRLF normalization warnings |
+| `pnpm audit --audit-level=high` | **no known vulnerabilities found** |
+
+Coverage details are recorded in `reports/m4-explainable-matching.md`: analysis revisions 99.53/85.71/100.00, analysis storage 97.36/89.77/100.00, match context 98.36/87.36/100.00, policy 97.17/83.87/100.00, schema 100.00/83.04/100.00, and match storage 92.88/82.95/91.30 for line/branch/function percentages. Node's built-in reporter exposes line rather than a separate statement column; line is the available statement/line measure.
+
+The synthetic acceptance test now captures a Vietnamese/English JD, publishes analysis and profile/evidence, creates locked context, validates/publishes and reads the assessment through the local API and renderer, publishes a replacement profile, observes stale state, publishes a replacement assessment and compares all prior immutable source/analysis/profile/evidence/assessment bytes. Automated renderer/controller tests cover wide/narrow table semantics, focus/scroll, stale/blocked/repair/legacy states and request races.
+
+Manual browser verification is **blocked**, not passed: the available in-app browser reported `IAB visibility is not supported in a subagent thread`, and hidden local-tab navigation was blocked by the client. The initial sandboxed Node run also hit the Windows user-profile `lstat` boundary (`EPERM: operation not permitted`) before discovery; authorized local reruns produced the final counts above. No private data was used. Unrelated untracked M3 plans/reports and `.tmp-pr5-review/` remain untouched.
+
+Residual risk is limited to the explicit deferrals: provider/model execution, semantic matching/ontology/equivalence, score/ranking, salary or commute inference, custom policies, document/CV generation, profile mutation, approvals, connectors, database/remote storage and external submission. Legacy artifacts remain readable and are not silently migrated or relabelled.

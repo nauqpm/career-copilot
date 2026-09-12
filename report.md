@@ -165,3 +165,41 @@ git diff --check
 - Whitespace check: **passed**.
 
 The prior immutable publication, stale-pointer, legacy refusal, exact-source CLI, capture-byte and opportunity-flow guarantees remain green. Unrelated untracked M3 artifacts remain untouched.
+
+## Task 3 — evidence-linked assessment schema and global policy (2026-09-12)
+
+Task 3 is limited to the structural `m4-v1` assessment contract, its global policy helpers, the forward-facing `assess-job` skill handoff, and synthetic contract tests. The parser accepts only the locked envelope shape: source/job/profile IDs and lowercase SHA-256 bindings, truthful match-analyst metadata, strict calendar-valid RFC3339 UTC timestamps, safe IDs with `current` reserved, exact recommendation/confidence/policy enums, and an envelope `contentHash`. It rejects scores, legacy CV authority fields, unsupported question owners, duplicate requirement/claim IDs, missing evidence for positive/conflicting findings and blockers, and evidence attached to unresolved verdicts. It does not perform matching, synonym expansion, salary parsing, geocoding, ranking, recommendation scoring, or evidence lookup; Task 4 owns live reference validation.
+
+The skill now consumes only a generated locked context and emits JSON for `MatchAssessment`. It preserves original requirement IDs/modalities, keeps Docker distinct from Kubernetes, retains unknown/not-evidenced states, requires explicit candidate/employer question ownership, treats salary gross/net ambiguity and HCMC/hybrid facts as source-bound clarification material, and records prompt-injection text as an anomaly without granting tools or changing output authority. CV creation, profile updates, JD-directed tool calls, approvals, and submission behavior are explicitly outside this path.
+
+### RED evidence
+
+Commands:
+
+```powershell
+pnpm exec tsx --test tests/match-schema.test.ts
+pnpm exec .\node_modules\.bin\tsx.CMD --test tests/match-schema.test.ts
+```
+
+The package fallback wrapper could not resolve the local `tsx` bin in this restricted Windows shell. The equivalent local-bin run, after authorized Node path resolution, failed as intended before the production modules existed with `ERR_MODULE_NOT_FOUND` for `src/match/schema.js` (**1 test file failed, 0 passed**).
+
+### GREEN and forward-test evidence
+
+Commands:
+
+```powershell
+pnpm exec .\node_modules\.bin\tsx.CMD --test tests/match-schema.test.ts
+node node_modules/typescript/bin/tsc --pretty false
+pnpm exec .\node_modules\.bin\tsx.CMD --test tests/match-schema.test.ts tests/job-analysis-revisions.test.ts tests/job-analysis-storage.test.ts tests/job-input.test.ts tests/job-capture.test.ts tests/m3-opportunity-flow.test.ts
+pnpm test
+git diff --check
+```
+
+- Focused schema/policy suite: **9 passed, 0 failed, 0 skipped**.
+- Focused suite plus Task 1/2, capture, input, and M3 opportunity regressions: **58 passed, 0 failed, 0 skipped**.
+- Registered repository suite: **217 passed, 0 failed, 0 skipped**.
+- The same synthetic baseline scenario independently parsed through `parseMatchAssessment`: exact Node evidence remains supported, Docker remains only partially supported, Kubernetes remains unknown with empty evidence, required/preferred/unknown modalities are retained, salary gross/net ambiguity remains a clarification, stated HCMC/hybrid facts remain explicit, and prompt-injection text is an anomaly only.
+- The rewritten skill contract was manually forward-tested against that locked scenario: it names no legacy `JobDecision`/CV output, emits no authority fields, and preserves the baseline injection and technology-boundary behavior. No prose grep is used as a behavioral test.
+- TypeScript build: **passed**; whitespace check: **passed**.
+
+The policy is intentionally structural. Its reusable coverage helper checks exact requirement ID/modality preservation when a later context/storage layer supplies the source analysis; it does not infer equivalence or recommendation outcomes. No legacy `JobDecision`, capture, profile, opportunity, or unrelated worktree bytes were changed.

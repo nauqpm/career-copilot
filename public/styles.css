@@ -118,6 +118,24 @@ li + li { margin-top: 8px; }
 .detail-section { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
 .detail-section .section-heading { align-items: flex-start; }
 .detail-section .section-heading .button-link { font-size: 12px; flex-shrink: 1; }
+.opportunity-saved-list { display: grid; gap: 12px; margin-bottom: 24px; }
+.opportunity-saved-summary { padding: 16px; border: 1px solid var(--line); background: var(--panel); }
+.opportunity-saved-summary h3 { margin-bottom: 6px; }
+.opportunity-saved-summary ul { margin: 0; }
+.opportunity-suggestions { margin-bottom: 24px; }
+.opportunity-suggestions p { margin-bottom: 8px; color: var(--muted); }
+.opportunity-decision-form select { margin-bottom: 20px; }
+.opportunity-preview { margin-bottom: 20px; color: var(--muted); overflow-wrap: anywhere; }
+.opportunity-confirmation { display: flex; align-items: flex-start; gap: 12px; margin: 4px 0 20px; font-weight: 600; cursor: pointer; }
+.opportunity-confirmation input { flex: 0 0 auto; width: 18px; height: 18px; margin: 3px 0 0; padding: 0; accent-color: var(--sage); }
+.opportunity-confirmation span { color: var(--text); font-weight: 600; }
+.opportunity-clear-form { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.opportunity-clear-form > p { color: var(--muted); }
+.opportunity-clear-form select { margin-bottom: 20px; }
+.opportunity-clear-pair { overflow-wrap: anywhere; }
+.danger-confirmation { margin-top: 16px; }
+button.danger-button { background: transparent; color: var(--danger); border-color: #664141; }
+button.danger-button:hover { background: #241718; color: var(--danger); border-color: var(--danger); }
 .subsection { margin-top: 20px; }
 .subsection p { margin-bottom: 8px; }
 .subsection ul { margin: 8px 0 0; }

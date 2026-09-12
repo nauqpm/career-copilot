@@ -36,7 +36,7 @@ test("detail previews the exact pair, preserves saved decisions and escapes peer
     { peerId: "job-peer", relation: "different", confirmed: "true" },
     "exact-confirmation",
   );
-  assert.match(html, /job-a và job-peer/);
+  assert.match(html, /job-a với job-peer/);
   assert.match(html, /Khác cơ hội/);
   assert.match(html, /Quyết định đã lưu/);
   assert.match(html, /Để sau/);
@@ -45,6 +45,26 @@ test("detail previews the exact pair, preserves saved decisions and escapes peer
   assert.match(html, /name="confirmed"[^>]*checked/);
   assert.match(html, /job-%3Cpeer%3E/);
   assert.doesNotMatch(html, /<img|<peer>/);
+});
+
+test("separates normal opportunity decisions from the confirmed clear action", () => {
+  const html = renderJobDetail(
+    { id: "job-a", title: "Role", sourcePreview: "Role", updatedAt: "2026-09-11T00:00:00.000Z", raw: { content: "Role", source: { value: "Local" } }, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false }, hasAnalysis: false, hasCvDraft: false },
+    "",
+    { health: "healthy", snapshot: { pointerHash: "sha256:" + "1".repeat(64), revision: { decisions: [{ leftId: "job-a", rightId: "job-b", relation: "same" }] } }, groups: [{ key: "job-a", jobIds: ["job-a", "job-b"] }], jobIds: ["job-a", "job-b"] },
+    {},
+  );
+
+  const normalForm = html.match(/<form id="opportunity-form"[\s\S]*?<\/form>/)?.[0] ?? "";
+  const clearForm = html.match(/<form id="opportunity-clear-form"[\s\S]*?<\/form>/)?.[0] ?? "";
+  assert.match(normalForm, /class="opportunity-confirmation"/);
+  assert.match(normalForm, /<input[^>]*name="confirmed"[^>]*>\s*<span>Tôi đã xem đúng hai JD/);
+  assert.doesNotMatch(normalForm, /value="clear"|Gỡ quyết định cặp này/);
+  assert.match(clearForm, /Gỡ quyết định đã lưu/);
+  assert.match(clearForm, /Chỉ gỡ liên kết giữa hai JD; nguồn JD vẫn được giữ nguyên/);
+  assert.match(clearForm, /name="peerId" value="job-b"/);
+  assert.match(clearForm, /name="confirmed"/);
+  assert.match(clearForm, /value="clear"/);
 });
 
 test("does not offer a repair peer as an editable opportunity choice", () => {

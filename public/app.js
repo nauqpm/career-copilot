@@ -115,9 +115,9 @@ export function initializeBrowserApp(browser = globalThis) {
   });
   app.addEventListener("change", (event) => {
     const form = typeof event.target.closest === "function" ? event.target.closest("form") : undefined;
-    if (form?.id === "opportunity-form") {
+    if (["opportunity-form", "opportunity-clear-form"].includes(form?.id)) {
       rememberDraft(form, event.target.name === "confirmed");
-      updateOpportunityPreview(form);
+      if (form.id === "opportunity-form") updateOpportunityPreview(form);
       if (event.target.name === "confirmed" && event.target.checked) {
         const values = new FormData(form);
         const expectedHash = state.opportunity?.snapshot?.pointerHash ?? null;
@@ -177,7 +177,7 @@ export function initializeBrowserApp(browser = globalThis) {
 
   app.addEventListener("submit", async (event) => {
     const form = event.target;
-    if (!["job-form", "note-form", "profile-source-form", "profile-form", "opportunity-form"].includes(form.id)) return;
+    if (!["job-form", "note-form", "profile-source-form", "profile-form", "opportunity-form", "opportunity-clear-form"].includes(form.id)) return;
     event.preventDefault();
     if (savingForms.includes(form) || state.loading) return;
     savingForms = [...savingForms, form];
@@ -218,22 +218,23 @@ export function initializeBrowserApp(browser = globalThis) {
           state = { ...state, note: saved.content };
           showNotice("Đã lưu ghi chú trên máy.");
         }
-      } else if (form.id === "opportunity-form" && route.page === "job") {
+      } else if (["opportunity-form", "opportunity-clear-form"].includes(form.id) && route.page === "job") {
         const peerId = String(values.get("peerId") ?? "");
         const relation = String(values.get("relation") ?? "");
         const opportunityAtSubmit = state.opportunity;
         const expectedHash = opportunityAtSubmit?.snapshot?.pointerHash ?? null;
         const confirmationKey = opportunityConfirmationKey(route.jobId, peerId, relation, expectedHash, state.opportunity);
         if (values.get("confirmed") !== "true" || state.opportunityConfirmationKey !== confirmationKey) throw new Error("Hãy xem đúng hai JD và xác nhận quyết định hiện tại trước khi lưu.");
-        if (!peerId || !["same", "different", "defer", "clear"].includes(relation)) throw new Error("Quyết định nhóm cơ hội chưa hợp lệ.");
+        const allowedRelations = form.id === "opportunity-clear-form" ? ["clear"] : ["same", "different", "defer"];
+        if (!peerId || !allowedRelations.includes(relation)) throw new Error("Quyết định nhóm cơ hội chưa hợp lệ.");
         const submittedOpportunityDraft = { peerId: values.get("peerId"), relation: values.get("relation"), confirmed: values.get("confirmed") };
         const saved = await requestJson("/api/opportunities/decisions", { method: "POST", headers: matchHeader(expectedHash === null ? '"missing"' : `"${expectedHash}"`), body: JSON.stringify({ leftId: route.jobId, rightId: peerId, relation, confirmed: true }) });
         const sameOpportunityContext = form.isConnected && state.route.page === "job" && state.route.jobId === route.jobId && JSON.stringify(state.opportunity) === JSON.stringify(opportunityAtSubmit);
         if (sameOpportunityContext) {
           const currentValues = new FormData(form);
           const sameOpportunityDraft = ["peerId", "relation", "confirmed"].every((field) => currentValues.get(field) === submittedOpportunityDraft[field]);
-          state = { ...state, opportunity: saved, opportunityDraft: sameOpportunityDraft ? {} : state.opportunityDraft, opportunityConfirmationKey: undefined };
-          showNotice("Đã lưu quyết định nhóm cơ hội trên máy.");
+          state = { ...state, opportunity: saved, opportunityDraft: form.id === "opportunity-clear-form" ? state.opportunityDraft : sameOpportunityDraft ? {} : state.opportunityDraft, opportunityConfirmationKey: undefined };
+          showNotice(form.id === "opportunity-clear-form" ? "Đã gỡ quyết định của cặp JD trên máy." : "Đã lưu quyết định nhóm cơ hội trên máy.");
           render();
         }
       } else if (form.id === "profile-form") {
@@ -275,8 +276,9 @@ export function initializeBrowserApp(browser = globalThis) {
     } catch (error) {
       const sameNote = form.id === "note-form" && state.route.page === "job" && state.route.jobId === route.jobId;
       const sameProfile = ["profile-form", "profile-source-form"].includes(form.id) && state.route.page === "profile";
-      const sameOpportunityForm = form.id === "opportunity-form" && route.page === "job" && state.route.page === "job" && state.route.jobId === route.jobId && form.isConnected;
-      const shouldShowError = form.id === "opportunity-form" ? sameOpportunityForm : form.isConnected || sameNote || sameProfile;
+      const opportunityForm = ["opportunity-form", "opportunity-clear-form"].includes(form.id);
+      const sameOpportunityForm = opportunityForm && route.page === "job" && state.route.page === "job" && state.route.jobId === route.jobId && form.isConnected;
+      const shouldShowError = opportunityForm ? sameOpportunityForm : form.isConnected || sameNote || sameProfile;
       if (shouldShowError) showNotice(`${error.message}${form.id === "profile-form" && !error.message.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}`, true);
       if (sameOpportunityForm) {
         state = { ...state, opportunityConfirmationKey: undefined };

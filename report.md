@@ -97,3 +97,37 @@ Fix verification:
 - `pnpm test`: **217 passed, 0 failed, 0 skipped**.
 - `pnpm build`: **passed**.
 - `git diff --check`: **passed**.
+
+## Task 2 — immutable analysis history and source-bound publication (2026-09-12)
+
+The analysis storage path is additive to the M3 capture layout. It verifies the exact `source.md` bytes, the parsed `source.json` manifest and the `raw.json` capture marker before accepting a source-bound `JobAnalysisRevision`. Valid revisions are written create-only under `analyses/<revision-id>.json`; only then is `analyses/current.json` advanced with the observed pointer hash. The legacy `analysis.json` artifact is never written or promoted. Current reads fail closed for malformed or dangling pointers, while history isolates malformed or source-mismatched orphan files. The CLI exposes a minimal exact-source handoff and a local validation/publication command; it does not invoke a model or external provider.
+
+### RED evidence
+
+Command:
+
+```powershell
+pnpm exec tsx --test tests/job-analysis-storage.test.ts
+```
+
+Observed after the persistence tests were written and before the storage module existed: **1 test file failed, 0 passed**, with the expected `ERR_MODULE_NOT_FOUND` for `src/job/analysis-storage.js`.
+
+### GREEN and regression evidence
+
+Commands:
+
+```powershell
+pnpm exec tsx --test tests/job-analysis-storage.test.ts
+pnpm exec tsx --test tests/job-analysis-storage.test.ts tests/job-capture.test.ts tests/m3-opportunity-flow.test.ts
+pnpm test
+pnpm build
+git diff --check
+```
+
+- Task 2 persistence and CLI tests: **7 passed, 0 failed, 0 skipped**.
+- Task 2 plus M3 capture and opportunity-flow regressions: **23 passed, 0 failed, 0 skipped**.
+- Registered repository suite: **217 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- Whitespace check: **passed**.
+
+Coverage includes first create-only publication, second revision pointer comparison, immutable old bytes, stale pointer conflicts with valid orphan retention, malformed and dangling pointer repair behavior, malformed orphan isolation, and refusal of legacy, missing-manifest, changed-source and changed-raw capture state. CLI tests confirm context output contains only the selected job/source binding and that publication reports the revision ID/hash without model execution. Existing capture bytes and M3 opportunity flow remain green; no legacy artifact or unrelated worktree file was changed.

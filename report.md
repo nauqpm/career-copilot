@@ -353,3 +353,33 @@ pnpm audit --audit-level=high
 - `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
 
 The direct sandboxed Node launcher remains blocked by the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` boundary, so the authorized local runtime supplied the test evidence. Unrelated untracked artifacts were preserved.
+
+## Task 5 round-2 fix — cover assessment preflight states (2026-09-12)
+
+The valid-analysis/unpublished-profile regression now reaches the `profile-unpublished` remediation and verifies the HTTP `200` blocked response. Assessment history, current and detail reads now reuse the verified capture validator after confirming the job directory exists, so malformed or missing `source.md`, `source.json` or `raw.json` consistently return the generic `409` repair envelope while healthy capture with absent assessments remains `404` where appropriate.
+
+### RED evidence
+
+```powershell
+.\\node_modules\\.bin\\tsx.CMD --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
+```
+
+The authorized local runtime ran **32 tests: 31 passed, 1 failed** before the capture-validation fix; the new capture-integrity route test reproduced a `200` history response for malformed source data.
+
+### GREEN and verification evidence
+
+```powershell
+.\\node_modules\\.bin\\tsx.CMD --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
+$testFiles = @(rg --files tests -g '*.test.ts'); & '.\\node_modules\\.bin\\tsx.CMD' --test $testFiles
+npm run build
+git diff --check
+pnpm audit --audit-level=high
+```
+
+- Focused regression suite: **32 passed, 0 failed, 0 skipped**.
+- Complete test tree: **270 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- `git diff --check`: **passed**.
+- `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
+
+The direct sandboxed Node launcher remains blocked by the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` boundary; authorized local runtime evidence was used. Unrelated untracked artifacts remain preserved.

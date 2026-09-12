@@ -10,7 +10,7 @@ import { parseProfileRevision } from "../profile/versions.js";
 import { assertSafePath, contentHash, ConflictError, readArtifact } from "../workspace/artifacts.js";
 import { workspacePrivacyWarnings } from "../workspace/privacy.js";
 import { assessmentFreshness, readCurrentMatch, readMatchHistory } from "../match/storage.js";
-import { isSafeMatchJobId, isSafeMatchProfileRevisionId, readMatchContext } from "../match/context.js";
+import { isSafeMatchJobId, isSafeMatchProfileRevisionId, readMatchContext, readVerifiedMatchCapture } from "../match/context.js";
 import { parseMatchAssessment } from "../match/schema.js";
 import {
   createPastedJob,
@@ -381,8 +381,7 @@ async function requireMatchJob(root: string, jobId: string): Promise<void> {
     await assertSafePath(directory);
     const info = await stat(directory);
     if (!info.isDirectory()) throw new MatchRepairError("match job directory is invalid");
-    if (await readArtifact(join(directory, "raw.json"))) return;
-    throw new MatchRepairError("match job capture is incomplete");
+    await readVerifiedMatchCapture(root, jobId);
   } catch (error) {
     if (error instanceof MatchMissingError || error instanceof MatchRepairError) throw error;
     if (isCode(error, "ENOENT")) throw new MatchMissingError();

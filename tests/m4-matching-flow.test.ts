@@ -278,6 +278,22 @@ test("match-context keeps an ordinary unpublished preflight block as a readable 
   }
 });
 
+test("match-context reaches an unpublished-profile block after valid analysis", async () => {
+  const state = await fixture();
+  await unlink(join(state.root, "data", "profile", "current.json"));
+  const app = await startTestServer(state.root);
+
+  try {
+    const response = await fetch(`${app.url}/api/jobs/${state.job.id}/match-context`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { status: string; remediation: Array<{ code: string }> };
+    assert.equal(body.status, "blocked");
+    assert.ok(body.remediation.some((item) => item.code === "profile-unpublished"));
+  } finally {
+    await app.close();
+  }
+});
+
 test("match-context maps corrupt current and explicit profile data to generic repair", async () => {
   const state = await fixture();
   const profilePath = join(state.root, "data", "profile", "revisions", `${state.publishedProfile.revision.id}.json`);
@@ -330,6 +346,46 @@ test("match routes classify an existing partial job as repair and a missing job 
     const missing = await fetch(`${app.url}/api/jobs/${state.job.id}-missing/assessments/current`);
     assert.equal(missing.status, 404);
     assert.deepEqual(await missing.json(), { error: "Not found" });
+  } finally {
+    await app.close();
+  }
+});
+
+test("assessment read routes return generic repair for malformed or missing capture artifacts", async () => {
+  const state = await fixture();
+  await saveMatchAssessment(state.root, state.job.id, assessmentFor(state), null);
+  const capturePaths = [
+    join(state.directory, "source.md"),
+    join(state.directory, "source.json"),
+    join(state.directory, "raw.json"),
+  ];
+  const originalBytes = new Map<string, Buffer>();
+  for (const path of capturePaths) originalBytes.set(path, await readFile(path));
+  const routes = [
+    `/api/jobs/${state.job.id}/assessments`,
+    `/api/jobs/${state.job.id}/assessments/current`,
+    `/api/jobs/${state.job.id}/assessments/assessment-one`,
+  ];
+  const app = await startTestServer(state.root);
+
+  try {
+    for (const path of capturePaths) {
+      await writeFile(path, "{broken capture\n", "utf8");
+      for (const route of routes) {
+        const response = await fetch(`${app.url}${route}`);
+        assert.equal(response.status, 409, `${path} ${route}`);
+        assert.deepEqual(await response.json(), { error: "Assessment data needs repair before it can be read." }, `${path} ${route}`);
+      }
+
+      await writeFile(path, originalBytes.get(path)!);
+      await unlink(path);
+      for (const route of routes) {
+        const response = await fetch(`${app.url}${route}`);
+        assert.equal(response.status, 409, `${path} missing ${route}`);
+        assert.deepEqual(await response.json(), { error: "Assessment data needs repair before it can be read." }, `${path} missing ${route}`);
+      }
+      await writeFile(path, originalBytes.get(path)!);
+    }
   } finally {
     await app.close();
   }

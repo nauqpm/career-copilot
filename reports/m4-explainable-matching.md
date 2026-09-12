@@ -46,13 +46,13 @@ career match publish <job-id> <assessment.json> --root <workspace> --expected-ha
 
 The existing `tests/m4-matching-flow.test.ts` was extended rather than introducing another runner. Its synthetic flow now:
 
-1. captures a Vietnamese/English-flavoured JD with exact source bytes;
+1. captures a bilingual JD with exact source bytes, including the Vietnamese line `Hybrid tại Hồ Chí Minh.` and its validated source locator;
 2. publishes a source-bound analysis revision;
 3. publishes a profile revision and leaf evidence;
 4. creates a locked context carrying the exact analysis/profile hashes;
 5. validates and publishes an assessment;
 6. reads the current assessment through the local API and feeds that response to the existing job-detail renderer;
-7. publishes a new profile and observes the prior assessment as stale; and
+7. publishes a new profile, reads the prior assessment through the public current-assessment API as stale, and renders the stale status/reason in the job detail; and
 8. validates and publishes a replacement assessment against the new profile.
 
 The test compares the original `source.md`, `source.json`, `raw.json`, analysis revision/pointer, profile revision, profile evidence and first assessment bytes after the replacement. All remain byte-identical. Mutable current pointers advance only where expected.
@@ -85,7 +85,7 @@ It reported **285 passed, 0 failed, 0 skipped** and the following new-module evi
 | `src/match/context.ts` | 98.36% | 87.36% | 100.00% |
 | `src/match/policy.ts` | 97.17% | 83.87% | 100.00% |
 | `src/match/schema.ts` | 100.00% | 83.04% | 100.00% |
-| `src/match/storage.ts` | 92.88% | 82.95% | 91.30% |
+| `src/match/storage.ts` | 92.56% | 82.95% | 91.30% |
 
 The first sandboxed `npm test` launch was blocked before test discovery by the Windows Node user-profile `lstat` boundary (`EPERM: operation not permitted`); the same local commands were rerun with the authorized runtime and the results above are from those fresh runs.
 

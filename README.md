@@ -109,11 +109,11 @@ A publish creates evidence from exact non-empty profile leaf values. Candidate-c
 
 For recovery, copy the workspace before changing artifacts. A malformed or missing revision is never silently replaced: the active pointer is read fail-closed, while history skips malformed orphan revision files and keeps valid revisions visible. Inspect a valid revision's file hash, then restore `current.json` with its exact `revisionId` and `revisionHash`; preserve the orphan file for later inspection. If no current pointer exists, the reader falls back to the legacy profile file.
 
-## Job decision and CV draft
+## Legacy job decision and CV draft
 
-Use `skills/assess-job/SKILL.md` in Codex with one validated `JobAnalysis` and the active profile. It creates a separate decision for that job: `consider`, `clarify`, or `not-ready`; it does not use a fit percentage. A job-specific `cv-draft.md` is created only when the decision recommends it, and never replaces the base profile.
+Existing `analysis.json`, `decision.json` and `cv-draft.md` remain readable compatibility artifacts. The legacy `decision.json` envelope keeps the dispositions `consider`, `clarify` and `not-ready`; `career decision validate` only validates a manually prepared legacy decision and writes it to the explicit output path. It does not invoke a skill, create a current `MatchAssessment`, or silently update a CV.
 
-This is the legacy decision/CV workflow. A bounded explainable assessment is read-only evidence and does not create or update a CV. Existing `analysis.json`, `decision.json` and `cv-draft.md` remain compatible artifacts; they are not silently migrated or relabelled as source-bound assessments.
+The current `skills/assess-job/SKILL.md` workflow is the bounded assessment flow documented above: it consumes a locked `match context`, emits JSON-only `draft-assessment.json`, and hands that file to `match validate` and `match publish`. It never creates `decision.json` or `cv-draft.md`. Any retained legacy CV draft stays separate from the read-only assessment and is never replaced by it.
 
 ```bash
 pnpm dev decision validate ./draft-decision.json --out ./data/jobs/<job-id>/decision.json

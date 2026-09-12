@@ -11,7 +11,7 @@ import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
 import { readMatchContext } from "../src/match/context.js";
 import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
-import { assessmentFreshness, readCurrentMatch, saveMatchAssessment } from "../src/match/storage.js";
+import { readCurrentMatch, saveMatchAssessment } from "../src/match/storage.js";
 import { createLocalJob } from "../src/workspace/storage.js";
 import { contentHash, readArtifact } from "../src/workspace/artifacts.js";
 import { renderJobDetail } from "../public/render.js";
@@ -21,6 +21,7 @@ const source = [
   "Requirements:",
   "- Build Node.js services.",
   "- English communication is preferred.",
+  "- Hybrid tại Hồ Chí Minh.",
 ].join("\r\n");
 
 const profile = {
@@ -66,6 +67,7 @@ async function fixture() {
       requirements: [
         { category: "skill" as const, statement: "Build Node.js services.", priority: "required" as const, id: "req-node", source: locator("Build Node.js services.") },
         { category: "language" as const, statement: "English communication is preferred.", priority: "preferred" as const, id: "req-english", source: locator("English communication is preferred.") },
+        { category: "other" as const, statement: "Hybrid tại Hồ Chí Minh.", priority: "unknown" as const, id: "req-hcm", source: locator("Hybrid tại Hồ Chí Minh.") },
       ],
       responsibilities: ["Build backend services."],
       compensation: { salaryStatus: "not-stated" as const },
@@ -106,6 +108,7 @@ function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessm
     requirementAssessments: [
       { requirementId: "req-node", modality: "required", verdict: "supported", explanation: "The selected profile has the exact Node.js evidence item.", evidenceIds: [state.evidenceId] },
       { requirementId: "req-english", modality: "preferred", verdict: "unknown", explanation: "The selected profile does not establish the requested communication context.", evidenceIds: [] },
+      { requirementId: "req-hcm", modality: "unknown", verdict: "unknown", explanation: "The source states a location and arrangement fact; the selected profile does not establish the exact requirement.", evidenceIds: [] },
     ],
     preferenceChecks: [],
     blockers: [],
@@ -245,6 +248,7 @@ test("synthetic matching flow preserves prior artifacts through UI read, stalene
     assert.match(rendered, /Đánh giá phiên bản/);
     assert.match(rendered, /Build Node\.js services\./);
     assert.match(rendered, /Node\.js/);
+    assert.match(rendered, /Hybrid tại Hồ Chí Minh/);
   } finally {
     await app.close();
   }
@@ -255,9 +259,25 @@ test("synthetic matching flow preserves prior artifacts through UI read, stalene
     state.publishedProfile.revisionHash,
     { confirmed: true },
   );
-  const stale = await assessmentFreshness(state.root, assessmentFor(state));
-  assert.equal(stale.stale, true);
-  assert.ok(stale.reasons.some((reason) => /profile/i.test(reason)));
+  const staleApp = await startTestServer(state.root);
+  try {
+    const staleResponse = await fetch(`${staleApp.url}/api/jobs/${state.job.id}/assessments/current`);
+    assert.equal(staleResponse.status, 200);
+    const stalePayload = await staleResponse.json() as { assessment: MatchAssessment; freshness: { stale: boolean; reasons: string[] } };
+    assert.equal(stalePayload.assessment.id, "assessment-one");
+    assert.equal(stalePayload.freshness.stale, true);
+    assert.ok(stalePayload.freshness.reasons.some((reason) => /profile/i.test(reason)));
+
+    const staleDetailResponse = await fetch(`${staleApp.url}/api/jobs/${state.job.id}`);
+    assert.equal(staleDetailResponse.status, 200);
+    const staleDetail = await staleDetailResponse.json() as Record<string, unknown>;
+    const staleRendered = renderJobDetail(staleDetail, "", undefined, {}, undefined, stalePayload);
+    assert.match(staleRendered, /data-assessment-status="stale"/);
+    assert.match(staleRendered, /Đánh giá này đã cũ/);
+    assert.match(staleRendered, /profile/i);
+  } finally {
+    await staleApp.close();
+  }
 
   const replacementBase = { ...assessmentFor(state, "assessment-two"), profileRef: { revisionId: nextProfile.revision.id, revisionHash: nextProfile.revisionHash } };
   const { contentHash: _ignored, ...replacementWithoutHash } = replacementBase;
@@ -295,7 +315,7 @@ test("assessment read APIs expose quoted pointer/artifact ETags and freshness", 
     const current = await currentResponse.json() as { assessment: MatchAssessment; freshness: { stale: boolean } };
     assert.equal(current.assessment.id, "assessment-one");
     assert.equal(current.assessment.recommendation, "consider");
-    assert.equal(current.assessment.requirementAssessments.length, 2);
+    assert.equal(current.assessment.requirementAssessments.length, 3);
     assert.deepEqual(current.freshness, { stale: false, reasons: [] });
 
     const detailResponse = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/assessment-one`);

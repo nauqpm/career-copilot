@@ -123,7 +123,8 @@ function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessm
 
 function withChangedHash(value: MatchAssessment, changes: Partial<MatchAssessment>): MatchAssessment {
   const next = { ...value, ...changes } as Omit<MatchAssessment, "contentHash">;
-  return { ...next, contentHash: hashMatchAssessment(next) };
+  const { contentHash: _ignored, ...withoutHash } = next as MatchAssessment;
+  return { ...next, contentHash: hashMatchAssessment(withoutHash) };
 }
 
 function legacyAssessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessment-v1") {
@@ -304,4 +305,83 @@ test("preserves an old unbound v1 assessment in repair history without trusting 
 test("new publication rejects a v1 assessment without evidence bindings", async () => {
   const state = await fixture();
   await assert.rejects(saveMatchAssessment(state.root, state.job.id, legacyAssessmentFor(state), null), /schema|evidence|version/i);
+});
+
+test("read surfaces revalidate v2 requirement, evidence and claim references", async () => {
+  const cases: Array<{ label: string; change: (assessment: MatchAssessment) => MatchAssessment }> = [
+    {
+      label: "requirement",
+      change: (assessment) => withChangedHash(assessment, {
+        requirementAssessments: [{ ...assessment.requirementAssessments[0]!, requirementId: "req-forged" }, assessment.requirementAssessments[1]!],
+      }),
+    },
+    {
+      label: "evidence",
+      change: (assessment) => withChangedHash(assessment, {
+        requirementAssessments: [{ ...assessment.requirementAssessments[0]!, evidenceIds: ["evidence-forged"] }, assessment.requirementAssessments[1]!],
+      }),
+    },
+    {
+      label: "claim path",
+      change: (assessment) => withChangedHash(assessment, {
+        preferenceChecks: [{
+          claimPath: "preferences.forged",
+          jobFact: "Hybrid work",
+          candidatePreference: "Hybrid",
+          verdict: "unknown",
+          explanation: "The stored claim path is not part of the selected profile.",
+          evidenceIds: [],
+        }],
+      }),
+    },
+  ];
+
+  for (const testCase of cases) {
+    const state = await fixture();
+    const saved = await saveMatchAssessment(state.root, state.job.id, assessmentFor(state), null);
+    const forged = testCase.change(saved.assessment);
+    const serialized = `${JSON.stringify(forged, null, 2)}\n`;
+    await writeFile(join(state.directory, "assessments", "assessment-one.json"), serialized, "utf8");
+    await writeFile(
+      join(state.directory, "assessments", "current.json"),
+      `${JSON.stringify({ schemaVersion: 1, assessmentId: "assessment-one", assessmentHash: hash(serialized) })}\n`,
+      "utf8",
+    );
+
+    await assert.rejects(readCurrentMatch(state.root, state.job.id), /assessment|requirement|evidence|claim/i, testCase.label);
+    const history = await readMatchHistory(state.root, state.job.id);
+    assert.equal(history.assessments[0]?.status, "needs-repair", testCase.label);
+
+    const app = await startTestServer(state.root);
+    try {
+      const current = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/current`);
+      assert.equal(current.status, 409, testCase.label);
+      assert.deepEqual(await current.json(), { error: "Assessment data needs repair before it can be read." });
+
+      const detail = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/assessment-one`);
+      assert.equal(detail.status, 409, testCase.label);
+      assert.deepEqual(await detail.json(), { error: "Assessment data needs repair before it can be read." });
+
+      const listed = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments`);
+      assert.equal(listed.status, 200, testCase.label);
+      assert.equal((await listed.json() as { assessments: Array<{ status: string }> }).assessments[0]?.status, "needs-repair", testCase.label);
+    } finally {
+      await app.close();
+    }
+  }
+});
+
+test("assessment-bearing workspace responses are private", async () => {
+  const state = await fixture();
+  await saveMatchAssessment(state.root, state.job.id, assessmentFor(state), null);
+  const app = await startTestServer(state.root);
+  try {
+    for (const path of ["/api/summary", "/api/jobs", `/api/jobs/${state.job.id}`]) {
+      const response = await fetch(`${app.url}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.equal(response.headers.get("cache-control"), "no-store", path);
+    }
+  } finally {
+    await app.close();
+  }
 });

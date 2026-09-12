@@ -57,6 +57,7 @@ export async function readCurrentMatch(root: string, jobId: string): Promise<Mat
   }
   const assessment = parseStoredAssessment(artifact.content, jobId, pointer.assessmentId);
   if (assessment.schemaVersion !== 2) throw new Error("Assessment schema version needs repair before it can be read");
+  await validateStoredReferences(root, assessment);
   return { assessment, assessmentHash: artifact.hash, pointerHash: pointerArtifact.hash };
 }
 
@@ -157,6 +158,12 @@ export async function assessmentFreshness(root: string, assessment: StoredMatchA
   if (assessment.policyVersion !== MATCH_POLICY_VERSION) staleReasons.push("matcher policy version changed");
 
   try {
+    await validateStoredReferences(root, assessment);
+  } catch {
+    repairReasons.push("assessment requirement, evidence or claim references need repair");
+  }
+
+  try {
     const capture = await readVerifiedMatchCapture(root, assessment.jobRef.jobId);
     if (capture.manifest.hash !== assessment.jobRef.captureHash || capture.source.hash !== assessment.jobRef.sourceHash) {
       staleReasons.push("job capture or source bytes changed");
@@ -250,11 +257,30 @@ async function validateLiveReferences(root: string, jobId: string, assessment: M
   await assertAssessmentReferences(root, assessment, analysis.revision.analysis.requirements, profile.revision);
 }
 
+async function validateStoredReferences(root: string, assessment: MatchAssessment): Promise<void> {
+  const analysis = await readExactMatchAnalysis(root, assessment.jobRef.jobId, assessment.jobRef.analysisId);
+  if (
+    assessment.jobRef.captureId !== analysis.revision.capture.id
+    || assessment.jobRef.captureHash !== analysis.capture.manifest.hash
+    || assessment.jobRef.sourceHash !== analysis.capture.source.hash
+    || assessment.jobRef.analysisHash !== analysis.revisionHash
+  ) {
+    throw new Error("Assessment references a changed analysis or capture");
+  }
+
+  const profile = await readExactMatchProfile(root, assessment.profileRef.revisionId);
+  if (assessment.profileRef.revisionHash !== profile.revisionHash) {
+    throw new Error("Assessment references a changed profile revision");
+  }
+  await assertAssessmentReferences(root, assessment, analysis.revision.analysis.requirements, profile.revision, false);
+}
+
 async function assertAssessmentReferences(
   root: string,
   assessment: MatchAssessment,
   requirements: ReadonlyArray<{ id: string; priority?: "required" | "preferred" | "unknown" }>,
   profile: ProfileRevision,
+  verifyEvidenceBindings = true,
 ): Promise<void> {
   assertRequirementCoverage(assessment.requirementAssessments, requirements);
   const requirementIds = new Set(requirements.map((requirement) => requirement.id));
@@ -295,7 +321,7 @@ async function assertAssessmentReferences(
   // readExactMatchProfile validates every mapping and every evidence artifact. The
   // selected evidence set must also be copied as exact artifact-byte bindings.
   const selectedEvidence = await readProfileEvidenceWithHashes(root, profile);
-  if (!sameEvidenceBindings(selectedEvidence.bindings, assessment.profileRef.evidence)) {
+  if (verifyEvidenceBindings && !sameEvidenceBindings(selectedEvidence.bindings, assessment.profileRef.evidence)) {
     throw new Error("Assessment evidence bindings do not match the selected profile revision");
   }
 }

@@ -55,9 +55,13 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
 
     if (method === "GET" && path === "/api/summary") {
       const [jobs, profileState] = await Promise.all([listWorkspaceJobs(root), profileSummary(root)]);
+      setNoStore(response);
       return sendJson(response, 200, { jobs, ...profileState, privacyWarnings });
     }
-    if (method === "GET" && path === "/api/jobs") return sendJson(response, 200, await listWorkspaceJobs(root));
+    if (method === "GET" && path === "/api/jobs") {
+      setNoStore(response);
+      return sendJson(response, 200, await listWorkspaceJobs(root));
+    }
     if (method === "POST" && path === "/api/jobs") {
       const body = await readJsonBody(request);
       const job = await createPastedJob(root, pastedJobInput(body));
@@ -216,7 +220,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     }
 
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
-    if (method === "GET" && jobMatch) return sendJson(response, 200, await readWorkspaceJob(root, decodeURIComponent(jobMatch[1]!)));
+    if (method === "GET" && jobMatch) {
+      setNoStore(response);
+      return sendJson(response, 200, await readWorkspaceJob(root, decodeURIComponent(jobMatch[1]!)));
+    }
 
     if (method === "GET") return await sendStaticFile(response, assetsRoot, path);
     return sendJson(response, 404, { error: "Not found" });

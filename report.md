@@ -514,3 +514,24 @@ The compatibility fixtures were added first with an old schema-version-1 artifac
 | `git diff --check` | **passed**; only LF/CRLF normalization warnings |
 
 The compatibility behavior is covered at schema, storage and HTTP boundaries: the legacy content hash is checked against the original v1 object shape; history exposes the v1 snapshot with `needs-repair` and `active`; current/detail reads return a generic repair response; and v1 input cannot be republished. The package `test` script now registers `tests/m4-final-review.test.ts`, so the seven prior final-review regressions plus the two compatibility regressions run in the normal suite. Manual browser verification remains **blocked**, not passed, by the unavailable subagent browser surface. Unrelated untracked M3 artifacts remain untouched.
+
+## Final review follow-up — revalidate assessment reads and private workspace responses (2026-09-12)
+
+This follow-up closes two read-boundary findings. V2 assessment reads now revalidate the bound analysis requirement coverage, selected-profile evidence references and preference claim paths instead of trusting only the envelope content hash. A forged artifact with a recomputed `contentHash` is retained in history as `needs-repair`, cannot expose a recommendation through current or detail reads, and returns the generic repair response through the API. Valid same-ID replacement evidence remains a `stale` snapshot when the assessment's semantic references are still valid; missing or corrupt bound artifacts remain `needs-repair`. The summary, job-list and job-detail API responses now set `Cache-Control: no-store` because they include assessment state.
+
+### TDD RED evidence
+
+The new regressions were added before the production changes. With a valid rehashed forged fixture, the focused final-review run recorded **11 tests: 9 passed, 2 failed**: forged requirement/evidence/claim references were not revalidated on read, and assessment-bearing workspace responses had no `no-store` header. The initial sandboxed launcher also hit the known Windows user-profile boundary (`EPERM: operation not permitted, lstat 'C:\\Users\\quanp'`); authorized local execution supplied the test results.
+
+### GREEN and verification evidence
+
+| Gate | Result |
+| --- | --- |
+| Focused final-review plus storage suite | **18 passed, 0 failed, 0 skipped** |
+| Complete registered `npm test` | **297 passed, 0 failed, 0 skipped** |
+| Built-in coverage over all registered test paths | completed successfully; the focused final-review coverage run was **11 passed, 0 failed, 0 skipped** |
+| `npm run build` | **passed** (`tsc`) |
+| `pnpm audit --audit-level=high` | **no known vulnerabilities found** |
+| `git diff --check` | **passed**; only LF/CRLF normalization warnings |
+
+The read regressions exercise all three semantic reference classes (requirement ID, evidence ID and claim path) across direct storage, current/detail HTTP repair responses and repair-marked history. Existing stale-evidence behavior remains green. No legacy artifact, profile schema, source bytes, private data or unrelated untracked M3 artifact was changed. Manual browser verification remains **blocked**, not passed, because the available in-app browser is unavailable in a subagent; the automated HTTP and renderer/controller suites are the relied-on evidence.

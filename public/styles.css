@@ -157,6 +157,10 @@ li + li { margin-top: 8px; }
 .assessment-findings ul, .assessment-remediation, .assessment-stale-reasons { margin-bottom: 0; }
 .assessment-findings li p { margin-bottom: 8px; }
 .assessment-findings li p:last-child { margin-bottom: 0; }
+.assessment-history ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.assessment-history-item { display: grid; grid-template-columns: minmax(120px, 1.2fr) minmax(150px, 1fr) minmax(120px, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.assessment-history-item > span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.assessment-history-item .decision-status { justify-self: start; }
 .question-owner { display: inline-block; margin-bottom: 4px; color: var(--amber); font-size: 12px; font-weight: 600; text-transform: lowercase; }
 .assessment-remediation { padding-left: 20px; }
 .assessment-remediation li p { margin: 4px 0 0; }
@@ -248,6 +252,8 @@ button.danger-button:hover { background: #241718; color: var(--danger); border-c
   .detail-header { flex-direction: column; }
   .assessment-snapshot { flex-direction: column; }
   .assessment-check dl { grid-template-columns: minmax(0, 1fr); }
+  .assessment-history-item { grid-template-columns: minmax(0, 1fr) auto; }
+  .assessment-history-item > span:nth-child(2), .assessment-history-item > span:nth-child(3) { grid-column: 1 / -1; }
   .section-heading { align-items: flex-start; flex-wrap: wrap; }
   .folder-summary { display: block; margin-top: 8px; }
   .cv-list > li { display: block; }

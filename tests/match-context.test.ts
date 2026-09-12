@@ -8,7 +8,7 @@ import { contentHash, readArtifact } from "../src/workspace/artifacts.js";
 import { createLocalJob } from "../src/workspace/storage.js";
 import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
-import { readExactMatchAnalysis, readMatchContext, readProfileEvidence, readVerifiedMatchCapture } from "../src/match/context.js";
+import { readExactMatchAnalysis, readMatchContext, readProfileEvidence, readProfileEvidenceWithHashes, readVerifiedMatchCapture } from "../src/match/context.js";
 import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
 import { saveMatchAssessment } from "../src/match/storage.js";
 
@@ -70,7 +70,8 @@ async function fixture() {
   const { contentHash: _ignored, ...withoutHash } = analysisBase;
   const analysis = await publishAnalysisRevision(root, job.id, { ...analysisBase, contentHash: hash(JSON.stringify(withoutHash)) }, null);
   const publishedProfile = await publishProfileRevision(root, profile, null, { confirmed: true });
-  return { root, job, directory, analysis, publishedProfile, sourceArtifact, manifestArtifact };
+  const evidence = await readProfileEvidenceWithHashes(root, publishedProfile.revision);
+  return { root, job, directory, analysis, publishedProfile, sourceArtifact, manifestArtifact, evidenceBindings: evidence.bindings };
 }
 
 test("returns a ready context from the verified capture, current analysis, and published profile", async () => {
@@ -113,7 +114,7 @@ test("binds a context-built assessment to the exact analysis and profile artifac
       analysisId: context.job.id,
       analysisHash: context.analysisHash,
     },
-    profileRef: { revisionId: context.profile.id, revisionHash: context.profileRevisionHash },
+    profileRef: { revisionId: context.profile.id, revisionHash: context.profileRevisionHash, evidence: context.evidenceBindings },
     policyVersion: "m4-v1",
     recommendation: "consider",
     confidence: "high",

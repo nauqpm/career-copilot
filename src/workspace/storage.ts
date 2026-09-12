@@ -188,9 +188,12 @@ async function readMatchState(root: string, jobId: string): Promise<{
       const current = await readCurrentMatch(root, jobId);
       if (current === undefined) return { matchAssessmentHistory: history.assessments };
       const freshness = await assessmentFreshness(root, current.assessment);
+      if (freshness.status === "needs-repair") {
+        return { matchAssessment: { status: "needs-repair" }, matchAssessmentHistory: history.assessments };
+      }
       return {
         matchAssessment: {
-          status: freshness.stale ? "stale" : "current",
+          status: freshness.status,
           id: current.assessment.id,
           createdAt: current.assessment.createdAt,
           assessmentHash: current.assessmentHash,

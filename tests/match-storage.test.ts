@@ -9,6 +9,7 @@ import { createLocalJob } from "../src/workspace/storage.js";
 import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
 import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
+import { readProfileEvidenceWithHashes } from "../src/match/context.js";
 import {
   assessmentFreshness,
   readCurrentMatch,
@@ -75,7 +76,8 @@ async function fixture() {
   const analysis = await publishAnalysisRevision(root, job.id, { ...analysisBase, contentHash: hash(JSON.stringify(withoutHash)) }, null);
   const publishedProfile = await publishProfileRevision(root, profile, null, { confirmed: true });
   const evidenceId = publishedProfile.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")!.evidenceIds[0]!;
-  return { root, job, directory, analysis, publishedProfile, sourceArtifact, manifestArtifact, evidenceId };
+  const evidence = await readProfileEvidenceWithHashes(root, publishedProfile.revision);
+  return { root, job, directory, analysis, publishedProfile, sourceArtifact, manifestArtifact, evidenceId, evidenceBindings: evidence.bindings };
 }
 
 function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessment-one"): MatchAssessment {
@@ -98,7 +100,7 @@ function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessm
       analysisId: state.analysis.revision.id,
       analysisHash: state.analysis.revisionHash,
     },
-    profileRef: { revisionId: state.publishedProfile.revision.id, revisionHash: state.publishedProfile.revisionHash },
+    profileRef: { revisionId: state.publishedProfile.revision.id, revisionHash: state.publishedProfile.revisionHash, evidence: state.evidenceBindings },
     policyVersion: "m4-v1",
     recommendation: "consider",
     confidence: "high",
@@ -220,11 +222,11 @@ test("marks prior snapshots stale when profile, analysis, policy, or source chan
   const saved = await saveMatchAssessment(state.root, state.job.id, assessment, null);
   const assessmentBytes = await readFile(join(state.directory, "assessments", "assessment-one.json"), "utf8");
 
-  assert.deepEqual(await assessmentFreshness(state.root, assessment), { stale: false, reasons: [] });
+  assert.deepEqual(await assessmentFreshness(state.root, assessment), { status: "current", reasons: [] });
 
   await publishProfileRevision(state.root, { ...profile, headline: "Platform engineer" }, state.publishedProfile.revisionHash, { confirmed: true });
   const profileStale = await assessmentFreshness(state.root, assessment);
-  assert.equal(profileStale.stale, true);
+  assert.equal(profileStale.status, "stale");
   assert.ok(profileStale.reasons.some((reason) => /profile/i.test(reason)));
 
   const analysisBase = {
@@ -248,17 +250,17 @@ test("marks prior snapshots stale when profile, analysis, policy, or source chan
   const { contentHash: _ignored, ...analysisWithoutHash } = analysisBase;
   await publishAnalysisRevision(state.root, state.job.id, { ...analysisBase, contentHash: hash(JSON.stringify(analysisWithoutHash)) }, state.analysis.pointerHash);
   const analysisStale = await assessmentFreshness(state.root, assessment);
-  assert.equal(analysisStale.stale, true);
+  assert.equal(analysisStale.status, "stale");
   assert.ok(analysisStale.reasons.some((reason) => /analysis/i.test(reason)));
 
   const priorPolicy = { ...assessment, policyVersion: "prior-policy" as never } as MatchAssessment;
   const policyStale = await assessmentFreshness(state.root, priorPolicy);
-  assert.equal(policyStale.stale, true);
+  assert.equal(policyStale.status, "stale");
   assert.ok(policyStale.reasons.some((reason) => /policy/i.test(reason)));
 
   await writeFile(join(state.directory, "source.md"), `${source} changed`, "utf8");
   const captureStale = await assessmentFreshness(state.root, assessment);
-  assert.equal(captureStale.stale, true);
+  assert.equal(captureStale.status, "needs-repair");
   assert.ok(captureStale.reasons.some((reason) => /repair|capture|source/i.test(reason)));
   assert.equal(await readFile(join(state.directory, "assessments", "assessment-one.json"), "utf8"), assessmentBytes);
   assert.match(saved.assessmentHash, /^sha256:/);

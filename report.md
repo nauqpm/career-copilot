@@ -465,3 +465,31 @@ Residual risk is limited to the explicit deferrals: provider/model execution, se
 This follow-up aligns the release evidence with the current contracts. The README now separates manual legacy `decision.json` validation and retained `cv-draft.md` compatibility artifacts from the current locked `skills/assess-job/SKILL.md` flow, which emits only `MatchAssessment` JSON for `match validate` and `match publish`. The acceptance flow now reads the stale assessment through `GET /api/jobs/<job-id>/assessments/current` after publishing a replacement profile and renders/asserts `data-assessment-status="stale"`, the Vietnamese stale warning and the profile freshness reason before publishing the replacement assessment. Its source includes the bilingual `Hybrid tại Hồ Chí Minh.` requirement with an exact validated locator.
 
 Fresh alignment evidence: focused analysis/matching suites **58 passed, 0 failed, 0 skipped**; `npm test` **285 passed, 0 failed, 0 skipped**; `npm run build` passed; built-in coverage **285 passed, 0 failed, 0 skipped** with all six new production modules above 80% line/branch/function thresholds; `pnpm audit --audit-level=high` reported no known vulnerabilities; and `git diff --check` passed. Manual browser verification remains blocked by the unavailable subagent browser surface, so the automated API/renderer assertion is the relied-on UI evidence. The exact alignment commit is `docs: align assessment workflow evidence`; no push or external write was performed, and unrelated untracked M3 artifacts remain untouched.
+
+## Final review fix — bind complete assessment snapshots (2026-09-12)
+
+This fix completes the assessment snapshot boundary at the selected profile's evidence-artifact bytes. Ready match context now returns a canonical sorted, duplicate-free `evidenceBindings` list of `{ id, hash }` for every evidence artifact in the selected profile revision. The assessment schema requires the same list under `profileRef.evidence`; the skill copies it byte-for-byte and never derives or invents hashes. Publication checks exact equality against the selected revision and current disk bytes. A valid same-ID replacement is stale, while missing, malformed, self-hash-invalid or inconsistent evidence/profile data is `needs-repair`.
+
+Freshness now has an explicit `current`, `stale`, or `needs-repair` status. Assessment current/detail routes return a generic `409` for repair and never return a usable recommendation. Workspace summaries and the renderer preserve repair state without treating it as a readable assessment. Match-context is private (`Cache-Control: no-store`) and a ready locked context gets a deterministic ETag. A validated `analysisRevision` query parameter enables exact historical analysis/profile context with no current fallback; the browser requests the saved IDs and accepts context only if analysis, profile and all evidence hashes match. Job detail now includes a compact, escaped, read-only assessment history list with local inspection links and status.
+
+### TDD RED evidence
+
+After the first focused draft of `tests/m4-final-review.test.ts`, the authorized run recorded **6 tests: 1 passed, 5 failed**. These were the expected contract failures: absent context evidence bindings; rejected `profileRef.evidence`; historical context falling back to the newer current analysis; missing private match-context cache headers; and missing job-detail history UI. The first sandboxed Node launch was blocked before test discovery by the known Windows profile boundary (`EPERM: operation not permitted, lstat 'C:\\Users\\quanp'`); authorized local execution was used for all results below.
+
+### GREEN and verification evidence
+
+| Gate | Result |
+| --- | --- |
+| Focused matching/context/storage/flow/UI suite, including final-review regressions | **46 passed, 0 failed, 0 skipped** |
+| HTTP web-smoke suite | **59 passed, 0 failed, 0 skipped** |
+| Complete registered `npm test` | **286 passed, 0 failed, 0 skipped** |
+| Node built-in coverage over registered paths plus `tests/m4-final-review.test.ts` | **293 passed, 0 failed, 0 skipped** |
+| `npm run build` | **passed** (`tsc`) |
+| `pnpm audit --audit-level=high` | **no known vulnerabilities found** |
+| `git diff --check` | **passed**; only LF/CRLF normalization warnings |
+
+The package test script remains unchanged; the new final-review file was run explicitly and included in the coverage run so the registered test boundary and focused regression evidence are both clear. Changed production coverage (line/branch/function) is `src/match/context.ts` **97.81/86.87/100.00**, `src/match/schema.ts` **100.00/82.93/100.00**, `src/match/storage.ts` **94.10/85.32/92.00**, `src/match/policy.ts` **97.17/83.87/100.00**, `src/web/server.ts` **98.20/92.41/89.36**, `src/workspace/storage.ts` **95.28/89.27/94.44**, `public/app.js` **96.44/87.16/88.89**, and `public/render.js` **97.69/86.24/96.52**.
+
+The regressions reproduce corrupt current profile pointers, forged same-ID evidence, changed source bytes, exact historical analysis/profile selection, private headers, generic repair responses, recommendation suppression and safe history rendering. Existing M3 opportunity draft/race behavior remains covered and green. M2 profile revision schema, legacy `analysis.json`/`decision.json`, source bytes, private data and unrelated untracked M3 artifacts were preserved. Manual browser verification remains **blocked**, not passed, because the available in-app browser is unavailable in this subagent and hidden local-tab navigation is client-blocked; automated API/renderer/controller tests are the UI evidence.
+
+Residual risks are the explicit deferred capabilities: provider/model execution, semantic matching/equivalence, score/ranking, salary/commute inference, document/CV generation, profile mutation, approvals, connectors, database/remote storage and external submission. The history links are read-only and add no apply, mutation, score or provider action.

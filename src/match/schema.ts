@@ -47,6 +47,11 @@ export type Question = {
   requirementId?: string;
 };
 
+export type EvidenceBinding = {
+  id: string;
+  hash: string;
+};
+
 export type MatchAssessment = {
   schemaVersion: 1;
   id: string;
@@ -70,6 +75,7 @@ export type MatchAssessment = {
   profileRef: {
     revisionId: string;
     revisionHash: string;
+    evidence: EvidenceBinding[];
   };
   policyVersion: typeof MATCH_POLICY_VERSION;
   recommendation: (typeof RECOMMENDATIONS)[number];
@@ -172,11 +178,35 @@ function parseJobRef(value: unknown): MatchAssessment["jobRef"] {
 
 function parseProfileRef(value: unknown): MatchAssessment["profileRef"] {
   if (!isRecord(value)) throw new Error("profileRef must be an object");
-  assertKnownKeys(value, ["revisionId", "revisionHash"], "profileRef");
+  assertKnownKeys(value, ["revisionId", "revisionHash", "evidence"], "profileRef");
   return {
     revisionId: safeId(value.revisionId, "profileRef.revisionId"),
     revisionHash: sha256(value.revisionHash, "profileRef.revisionHash"),
+    evidence: parseEvidenceBindings(value.evidence),
   };
+}
+
+function parseEvidenceBindings(value: unknown): EvidenceBinding[] {
+  if (!Array.isArray(value)) throw new Error("profileRef.evidence must be an array");
+  const bindings = value.map((entry, index): EvidenceBinding => {
+    if (!isRecord(entry)) throw new Error(`profileRef.evidence[${index}] must be an object`);
+    assertKnownKeys(entry, ["id", "hash"], `profileRef.evidence[${index}]`);
+    return {
+      id: safeEvidenceId(entry.id, `profileRef.evidence[${index}].id`),
+      hash: sha256(entry.hash, `profileRef.evidence[${index}].hash`),
+    };
+  });
+  const seen = new Set<string>();
+  for (const binding of bindings) {
+    if (seen.has(binding.id)) throw new Error(`profileRef.evidence must not contain duplicate IDs: ${binding.id}`);
+    seen.add(binding.id);
+  }
+  for (let index = 1; index < bindings.length; index += 1) {
+    if (bindings[index - 1]!.id >= bindings[index]!.id) {
+      throw new Error("profileRef.evidence must be sorted by ID");
+    }
+  }
+  return bindings;
 }
 
 function parseRequirementAssessments(value: unknown): RequirementAssessment[] {

@@ -150,19 +150,29 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
 
     const matchContextMatch = path.match(/^\/api\/jobs\/([^/]+)\/match-context$/);
     if (method === "GET" && matchContextMatch) {
+      setNoStore(response);
       const jobId = decodePathSegment(matchContextMatch[1]!);
       await requireMatchJob(root, jobId);
       const profileRevision = requestedProfileRevision(url);
-      const context = await readMatchContext(root, jobId, profileRevision);
+      const analysisRevision = requestedAnalysisRevision(url);
+      const context = await readMatchContext(root, jobId, profileRevision, analysisRevision);
       if (context.status === "blocked") {
         const repair = context.remediation.some((item) => item.code.endsWith("-needs-repair"));
         return sendJson(response, repair ? 409 : 200, repair ? { error: "Assessment data needs repair before it can be read." } : context);
       }
+      setVersion(response, contentHash(JSON.stringify({
+        jobId,
+        analysisHash: context.analysisHash,
+        profileRevisionHash: context.profileRevisionHash,
+        evidenceBindings: context.evidenceBindings,
+        policyVersion: context.policyVersion,
+      })));
       return sendJson(response, 200, context);
     }
 
     const assessmentsMatch = path.match(/^\/api\/jobs\/([^/]+)\/assessments$/);
     if (method === "GET" && assessmentsMatch) {
+      setNoStore(response);
       const jobId = decodePathSegment(assessmentsMatch[1]!);
       await requireMatchJob(root, jobId);
       const current = await readCurrentMatchOrRepair(root, jobId);
@@ -173,16 +183,20 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
 
     const currentAssessmentMatch = path.match(/^\/api\/jobs\/([^/]+)\/assessments\/current$/);
     if (method === "GET" && currentAssessmentMatch) {
+      setNoStore(response);
       const jobId = decodePathSegment(currentAssessmentMatch[1]!);
       await requireMatchJob(root, jobId);
       const current = await readCurrentMatchOrRepair(root, jobId);
       if (current === undefined) return sendJson(response, 404, { error: "Not found" });
+      const freshness = await assessmentFreshness(root, current.assessment);
       setVersion(response, current.pointerHash);
-      return sendJson(response, 200, { assessment: current.assessment, freshness: await assessmentFreshness(root, current.assessment) });
+      if (freshness.status === "needs-repair") return sendJson(response, 409, { error: "Assessment data needs repair before it can be read." });
+      return sendJson(response, 200, { assessment: current.assessment, freshness });
     }
 
     const assessmentDetailMatch = path.match(/^\/api\/jobs\/([^/]+)\/assessments\/([^/]+)$/);
     if (method === "GET" && assessmentDetailMatch) {
+      setNoStore(response);
       const jobId = decodePathSegment(assessmentDetailMatch[1]!);
       const assessmentId = decodePathSegment(assessmentDetailMatch[2]!);
       await requireMatchJob(root, jobId);
@@ -193,8 +207,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       if (artifact === undefined) return sendJson(response, 404, { error: "Not found" });
       const assessment = parseMatchAssessment(JSON.parse(artifact.content) as unknown);
       if (assessment.id !== assessmentId || assessment.jobRef.jobId !== jobId) return sendJson(response, 404, { error: "Not found" });
+      const freshness = await assessmentFreshness(root, assessment);
       setVersion(response, artifact.hash);
-      return sendJson(response, 200, { assessment, freshness: await assessmentFreshness(root, assessment) });
+      if (freshness.status === "needs-repair") return sendJson(response, 409, { error: "Assessment data needs repair before it can be read." });
+      return sendJson(response, 200, { assessment, freshness });
     }
 
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
@@ -357,6 +373,10 @@ function setVersion(response: ServerResponse, hash: string | null): void {
   response.setHeader("cache-control", "no-store");
 }
 
+function setNoStore(response: ServerResponse): void {
+  response.setHeader("cache-control", "no-store");
+}
+
 function decodePathSegment(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -369,6 +389,15 @@ function requestedProfileRevision(url: URL): string | undefined {
   const values = url.searchParams.getAll("profileRevision");
   if (values.length === 0) return undefined;
   if (values.length !== 1 || !isSafeMatchProfileRevisionId(values[0])) {
+    throw new InputError("The supplied local data is invalid.");
+  }
+  return values[0];
+}
+
+function requestedAnalysisRevision(url: URL): string | undefined {
+  const values = url.searchParams.getAll("analysisRevision");
+  if (values.length === 0) return undefined;
+  if (values.length !== 1 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(values[0]!) || values[0] === "current") {
     throw new InputError("The supplied local data is invalid.");
   }
   return values[0];

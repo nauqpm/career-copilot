@@ -33,7 +33,7 @@ Phạm vi đã giao chỉ gồm một capture JD đã xác minh, một immutable
 | Matcher policy | Có | `policyVersion: "m4-v1"` |
 | Producer/run metadata | Có | skill version, model label, prompt template hash; supplied by the producer |
 
-Nếu analysis invalid, capture missing/corrupt, profile revision không tồn tại hoặc user chưa publish profile, context reader trả `blocked` với remediation cụ thể. `blocked` không được persist như một assessment. Nó không fallback âm thầm sang latest profile, legacy `analysis.json`, raw text khác hoặc profile revision khác với revision đã chọn.
+Nếu analysis invalid, capture missing/corrupt, profile revision không tồn tại hoặc user chưa publish profile, context reader trả `blocked` với remediation cụ thể. `blocked` không được persist như một assessment. Nó không fallback âm thầm sang latest profile, legacy `analysis.json`, raw text khác hoặc profile revision khác với revision đã chọn. Context ready cũng trả `evidenceBindings`: danh sách canonical đã sort gồm `{ id, hash }` cho toàn bộ evidence artifact của profile revision đã chọn; skill chỉ copy danh sách này vào assessment.
 
 ## 4. Kết quả matching
 
@@ -45,7 +45,7 @@ type MatchAssessment = {
   createdBy: { kind: "agent"; role: "match-analyst"; skillVersion: string; model: string; promptHash: string };
   contentHash: string;
   jobRef: { jobId: string; captureId: string; captureHash: string; sourceHash: string; analysisId: string; analysisHash: string };
-  profileRef: { revisionId: string; revisionHash: string };
+  profileRef: { revisionId: string; revisionHash: string; evidence: Array<{ id: string; hash: string }> };
   policyVersion: "m4-v1";
   recommendation: "consider" | "clarify" | "not-ready";
   confidence: "high" | "medium" | "low";
@@ -63,6 +63,8 @@ Mỗi `RequirementAssessment` có requirement quote/location từ JD, modality, 
 Trong artifact, requirement quote/location is resolved from the exact source-bound analysis and evidence IDs are checked against the selected profile revision. `supported`, `partially-supported`, `conflicting` and blockers require evidence; `unknown`/`not-evidenced` stay unresolved. Questions identify `candidate` or `employer` ownership. Anomaly text, including prompt-injection-looking JD content, is treated as untrusted data and cannot change tools, permissions or output shape.
 
 `confidence` nói độ đầy đủ/độ rõ của input cho recommendation: `low` khi JD mơ hồ, source missing hoặc nhiều required facts chưa xác minh. Nó không phải confidence năng lực ứng viên.
+
+Assessment freshness là một trạng thái rõ ràng: `current` khi toàn bộ capture, analysis, profile và evidence binding vẫn khớp; `stale` khi một input hợp lệ mới hơn hoặc evidence artifact hợp lệ đổi bytes; `needs-repair` khi pointer, capture, revision hoặc evidence bị thiếu, hỏng hoặc không nhất quán. Current/detail API trả `409` generic cho `needs-repair` để không hiển thị recommendation chưa còn đáng tin. Context historical có thể nhận `analysisRevision` cùng `profileRevision` và đọc đúng artifact đã bind, không rơi về current; response là `no-store` và ready context mang ETag.
 
 ## 5. Logic recommendation, không dùng score
 

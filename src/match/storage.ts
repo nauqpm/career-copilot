@@ -4,12 +4,12 @@ import { join, resolve } from "node:path";
 import { readCurrentAnalysis } from "../job/analysis-storage.js";
 import { profileClaimPaths, type ProfileRevision } from "../profile/versions.js";
 import { assertRequirementCoverage, MATCH_POLICY_VERSION, isSafeEvidenceId, isSafeMatchId } from "./policy.js";
-import { parseMatchAssessment, type MatchAssessment } from "./schema.js";
+import { parseMatchAssessment, type EvidenceBinding, type MatchAssessment } from "./schema.js";
 import {
   readCurrentPublishedProfile,
   readExactMatchAnalysis,
   readExactMatchProfile,
-  readProfileEvidence,
+  readProfileEvidenceWithHashes,
   readVerifiedMatchCapture,
 } from "./context.js";
 import { assertSafePath, readArtifact, writeArtifact } from "../workspace/artifacts.js";
@@ -32,9 +32,14 @@ export type MatchHistory = {
     id: string;
     createdAt: string;
     assessmentHash: string;
+    recommendation: MatchAssessment["recommendation"];
+    status: MatchFreshnessStatus;
     active: boolean;
   }>;
 };
+
+export type MatchFreshnessStatus = "current" | "stale" | "needs-repair";
+export type MatchFreshness = { status: MatchFreshnessStatus; reasons: string[] };
 
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
 const safeJobIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -96,10 +101,13 @@ export async function readMatchHistory(root: string, jobId: string): Promise<Mat
     try {
       const filenameId = entry.slice(0, -".json".length);
       const assessment = parseStoredAssessment(artifact.content, jobId, filenameId);
+      const freshness = await assessmentFreshness(root, assessment);
       assessments.push({
         id: assessment.id,
         createdAt: assessment.createdAt,
         assessmentHash: artifact.hash,
+        recommendation: assessment.recommendation,
+        status: freshness.status,
         active: current?.assessmentId === assessment.id && current.assessmentHash === artifact.hash,
       });
     } catch {
@@ -138,34 +146,60 @@ export async function saveMatchAssessment(
   return { assessment, assessmentHash, pointerHash };
 }
 
-export async function assessmentFreshness(root: string, assessment: MatchAssessment): Promise<{ stale: boolean; reasons: string[] }> {
-  const reasons: string[] = [];
-  if (assessment.policyVersion !== MATCH_POLICY_VERSION) reasons.push("matcher policy version changed");
+export async function assessmentFreshness(root: string, assessment: MatchAssessment): Promise<MatchFreshness> {
+  const staleReasons: string[] = [];
+  const repairReasons: string[] = [];
+  if (assessment.policyVersion !== MATCH_POLICY_VERSION) staleReasons.push("matcher policy version changed");
 
-  let captureHealthy = false;
   try {
     const capture = await readVerifiedMatchCapture(root, assessment.jobRef.jobId);
-    captureHealthy = true;
     if (capture.manifest.hash !== assessment.jobRef.captureHash || capture.source.hash !== assessment.jobRef.sourceHash) {
-      reasons.push("job capture or source bytes changed");
+      staleReasons.push("job capture or source bytes changed");
     }
   } catch {
-    reasons.push("job capture/source needs repair");
+    repairReasons.push("job capture/source needs repair");
+  }
+
+  try {
+    const boundAnalysis = await readExactMatchAnalysis(root, assessment.jobRef.jobId, assessment.jobRef.analysisId);
+    if (
+      boundAnalysis.revisionHash !== assessment.jobRef.analysisHash
+      || boundAnalysis.revision.capture.id !== assessment.jobRef.captureId
+      || boundAnalysis.revision.capture.manifestHash !== assessment.jobRef.captureHash
+      || boundAnalysis.revision.capture.sourceHash !== assessment.jobRef.sourceHash
+    ) {
+      repairReasons.push("bound analysis revision changed or is inconsistent");
+    }
+  } catch {
+    repairReasons.push("bound analysis revision needs repair");
   }
 
   try {
     const currentAnalysis = await readCurrentAnalysis(root, assessment.jobRef.jobId);
     if (currentAnalysis === undefined) {
-      reasons.push("current analysis is unpublished");
+      repairReasons.push("current analysis pointer is missing");
     } else if (
       currentAnalysis.revision.id !== assessment.jobRef.analysisId
       || currentAnalysis.revisionHash !== assessment.jobRef.analysisHash
       || currentAnalysis.revision.capture.id !== assessment.jobRef.captureId
     ) {
-      reasons.push("analysis revision changed");
+      staleReasons.push("analysis revision changed");
     }
   } catch {
-    if (captureHealthy) reasons.push("current analysis needs repair");
+    repairReasons.push("current analysis needs repair");
+  }
+
+  try {
+    const boundProfile = await readExactMatchProfile(root, assessment.profileRef.revisionId);
+    if (boundProfile.revisionHash !== assessment.profileRef.revisionHash) {
+      repairReasons.push("bound profile revision changed or is inconsistent");
+    }
+    const selectedEvidence = await readProfileEvidenceWithHashes(root, boundProfile.revision);
+    if (!sameEvidenceBindings(selectedEvidence.bindings, assessment.profileRef.evidence)) {
+      staleReasons.push("profile evidence artifact set or bytes changed");
+    }
+  } catch {
+    repairReasons.push("bound profile revision/evidence needs repair");
   }
 
   try {
@@ -174,14 +208,17 @@ export async function assessmentFreshness(root: string, assessment: MatchAssessm
       currentProfile.revision.id !== assessment.profileRef.revisionId
       || currentProfile.revisionHash !== assessment.profileRef.revisionHash
     ) {
-      reasons.push("profile revision changed");
+      staleReasons.push("profile revision changed");
     }
   } catch {
-    reasons.push("current profile revision/evidence needs repair");
+    repairReasons.push("current profile revision/evidence needs repair");
   }
 
-  const uniqueReasons = [...new Set(reasons)];
-  return { stale: uniqueReasons.length > 0, reasons: uniqueReasons };
+  const reasons = [...new Set([...repairReasons, ...staleReasons])];
+  return {
+    status: repairReasons.length > 0 ? "needs-repair" : staleReasons.length > 0 ? "stale" : "current",
+    reasons,
+  };
 }
 
 async function validateLiveReferences(root: string, jobId: string, assessment: MatchAssessment): Promise<void> {
@@ -250,9 +287,19 @@ async function assertAssessmentReferences(
     }
   }
 
-  // readExactMatchProfile validates every mapping and every evidence artifact. Reading
-  // the selected evidence set here also ensures references are loaded before the write.
-  await readProfileEvidence(root, profile);
+  // readExactMatchProfile validates every mapping and every evidence artifact. The
+  // selected evidence set must also be copied as exact artifact-byte bindings.
+  const selectedEvidence = await readProfileEvidenceWithHashes(root, profile);
+  if (!sameEvidenceBindings(selectedEvidence.bindings, assessment.profileRef.evidence)) {
+    throw new Error("Assessment evidence bindings do not match the selected profile revision");
+  }
+}
+
+function sameEvidenceBindings(left: ReadonlyArray<EvidenceBinding>, right: ReadonlyArray<EvidenceBinding>): boolean {
+  return left.length === right.length && left.every((binding, index) => {
+    const candidate = right[index];
+    return candidate?.id === binding.id && candidate.hash === binding.hash;
+  });
 }
 
 function parseStoredAssessment(content: string, jobId: string, filenameId: string): MatchAssessment {

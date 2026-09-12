@@ -40,6 +40,11 @@ function assessment(overrides: Record<string, unknown> = {}): MatchAssessment {
     profileRef: {
       revisionId: "profile-one",
       revisionHash: hash("profile"),
+      evidence: [
+        { id: "evidence-docker", hash: hash("evidence-docker") },
+        { id: "evidence-node", hash: hash("evidence-node") },
+        { id: "evidence-preference", hash: hash("evidence-preference") },
+      ],
     },
     policyVersion: "m4-v1",
     recommendation: "clarify",
@@ -193,6 +198,39 @@ test("accepts the existing profile evidence ID namespace without weakening trave
     evidenceIds: ["evidence..1"],
   };
   assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(traversal)), /evidenceIds|identifier|safe/i);
+});
+
+test("requires canonical sorted evidence artifact bindings on the selected profile revision", () => {
+  const valid = parseMatchAssessment(assessment());
+  assert.deepEqual(valid.profileRef.evidence.map((entry) => entry.id), ["evidence-docker", "evidence-node", "evidence-preference"]);
+
+  const unsorted = assessment();
+  unsorted.profileRef = {
+    ...unsorted.profileRef,
+    evidence: [...unsorted.profileRef.evidence].reverse(),
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(unsorted)), /sorted/i);
+
+  const duplicate = assessment();
+  duplicate.profileRef = {
+    ...duplicate.profileRef,
+    evidence: [...duplicate.profileRef.evidence, duplicate.profileRef.evidence[0]!],
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(duplicate)), /duplicate/i);
+
+  const invalidHash = assessment();
+  invalidHash.profileRef = {
+    ...invalidHash.profileRef,
+    evidence: [{ ...invalidHash.profileRef.evidence[0]!, hash: "sha256:" + "A".repeat(64) }],
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(invalidHash)), /hash/i);
+
+  const unsafeId = assessment();
+  unsafeId.profileRef = {
+    ...unsafeId.profileRef,
+    evidence: [{ ...unsafeId.profileRef.evidence[0]!, id: "../outside" }],
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(unsafeId)), /identifier|evidence/i);
 });
 
 test("requires complete requirement coverage with exact source modalities", () => {

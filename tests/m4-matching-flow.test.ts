@@ -9,7 +9,7 @@ import { runCli, type CliIo } from "../src/cli.js";
 import { createWorkspaceServer } from "../src/web/server.js";
 import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
-import { readMatchContext } from "../src/match/context.js";
+import { readMatchContext, readProfileEvidenceWithHashes } from "../src/match/context.js";
 import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
 import { readCurrentMatch, saveMatchAssessment } from "../src/match/storage.js";
 import { createLocalJob } from "../src/workspace/storage.js";
@@ -77,7 +77,8 @@ async function fixture() {
   const analysis = await publishAnalysisRevision(root, job.id, { ...analysisBase, contentHash: hash(JSON.stringify(withoutHash)) }, null);
   const publishedProfile = await publishProfileRevision(root, profile, null, { confirmed: true });
   const evidenceId = publishedProfile.revision.claimEvidence.find((claim) => claim.claimPath === "skills[0]")!.evidenceIds[0]!;
-  return { root, job, directory, analysis, publishedProfile, sourceArtifact, manifestArtifact, evidenceId };
+  const evidence = await readProfileEvidenceWithHashes(root, publishedProfile.revision);
+  return { root, job, directory, analysis, publishedProfile, sourceArtifact, manifestArtifact, evidenceId, evidenceBindings: evidence.bindings };
 }
 
 function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessment-one"): MatchAssessment {
@@ -100,7 +101,7 @@ function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessm
       analysisId: state.analysis.revision.id,
       analysisHash: state.analysis.revisionHash,
     },
-    profileRef: { revisionId: state.publishedProfile.revision.id, revisionHash: state.publishedProfile.revisionHash },
+    profileRef: { revisionId: state.publishedProfile.revision.id, revisionHash: state.publishedProfile.revisionHash, evidence: state.evidenceBindings },
     policyVersion: "m4-v1",
     recommendation: "consider",
     confidence: "high",
@@ -239,7 +240,7 @@ test("synthetic matching flow preserves prior artifacts through UI read, stalene
     assert.equal(currentResponse.status, 200);
     const currentPayload = await currentResponse.json() as { assessment: MatchAssessment; freshness: { stale: boolean; reasons: string[] } };
     assert.equal(currentPayload.assessment.id, "assessment-one");
-    assert.deepEqual(currentPayload.freshness, { stale: false, reasons: [] });
+    assert.deepEqual(currentPayload.freshness, { status: "current", reasons: [] });
 
     const detailResponse = await fetch(`${app.url}/api/jobs/${state.job.id}`);
     assert.equal(detailResponse.status, 200);
@@ -265,7 +266,7 @@ test("synthetic matching flow preserves prior artifacts through UI read, stalene
     assert.equal(staleResponse.status, 200);
     const stalePayload = await staleResponse.json() as { assessment: MatchAssessment; freshness: { stale: boolean; reasons: string[] } };
     assert.equal(stalePayload.assessment.id, "assessment-one");
-    assert.equal(stalePayload.freshness.stale, true);
+    assert.equal(stalePayload.freshness.status, "stale");
     assert.ok(stalePayload.freshness.reasons.some((reason) => /profile/i.test(reason)));
 
     const staleDetailResponse = await fetch(`${staleApp.url}/api/jobs/${state.job.id}`);
@@ -279,7 +280,8 @@ test("synthetic matching flow preserves prior artifacts through UI read, stalene
     await staleApp.close();
   }
 
-  const replacementBase = { ...assessmentFor(state, "assessment-two"), profileRef: { revisionId: nextProfile.revision.id, revisionHash: nextProfile.revisionHash } };
+  const replacementEvidence = (await readProfileEvidenceWithHashes(state.root, nextProfile.revision)).bindings;
+  const replacementBase = { ...assessmentFor(state, "assessment-two"), profileRef: { revisionId: nextProfile.revision.id, revisionHash: nextProfile.revisionHash, evidence: replacementEvidence } };
   const { contentHash: _ignored, ...replacementWithoutHash } = replacementBase;
   const replacement = { ...replacementWithoutHash, contentHash: hashMatchAssessment(replacementWithoutHash) };
   const replacementPath = join(state.root, "assessment-flow-two.json");
@@ -316,7 +318,7 @@ test("assessment read APIs expose quoted pointer/artifact ETags and freshness", 
     assert.equal(current.assessment.id, "assessment-one");
     assert.equal(current.assessment.recommendation, "consider");
     assert.equal(current.assessment.requirementAssessments.length, 3);
-    assert.deepEqual(current.freshness, { stale: false, reasons: [] });
+    assert.deepEqual(current.freshness, { status: "current", reasons: [] });
 
     const detailResponse = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/assessment-one`);
     assert.equal(detailResponse.status, 200);

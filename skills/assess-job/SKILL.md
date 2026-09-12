@@ -7,7 +7,7 @@ description: Use when a Career Copilot user explicitly asks Codex to compare one
 
 Consume only the generated, locked match context plus trusted producer/run metadata supplied by the caller. The context must identify one verified job capture, one source-bound analysis revision, one published profile revision, the selected profile evidence items, and policy version `m4-v1`. The producer metadata must explicitly provide `skillVersion`, `model`, and `promptHash` alongside that local context; it is not derived from disk. Copy those exact caller-supplied values into `createdBy`. The local validator rejects missing or malformed metadata and never invents a model, skill version, or prompt hash. Do not reread a different JD, raw profile, legacy `analysis.json`, or an unselected profile revision.
 
-Copy the exact artifact bindings from the ready context without recomputing or inventing them: use `context.analysisHash` for `jobRef.analysisHash` and `context.profileRevisionHash` for `profileRef.revisionHash`. These opaque hashes are required for local publication of the assessment.
+Copy the exact artifact bindings from the ready context without recomputing or inventing them: use `context.analysisHash` for `jobRef.analysisHash`, `context.profileRevisionHash` for `profileRef.revisionHash`, and copy `context.evidenceBindings` byte-for-byte as `profileRef.evidence`. The evidence list must remain the caller-provided sorted `{ id, hash }` list; do not derive hashes from evidence content or invent entries. These opaque hashes are required for local publication of the assessment.
 
 Return JSON only. Produce the `MatchAssessment` shape accepted by `parseMatchAssessment`:
 
@@ -32,7 +32,7 @@ Return JSON only. Produce the `MatchAssessment` shape accepted by `parseMatchAss
     "analysisId": "<locked analysis id>",
     "analysisHash": "<locked analysis hash>"
   },
-  "profileRef": { "revisionId": "<locked profile revision id>", "revisionHash": "<locked profile hash>" },
+  "profileRef": { "revisionId": "<locked profile revision id>", "revisionHash": "<locked profile hash>", "evidence": [{ "id": "<copy context.evidenceBindings[i].id>", "hash": "<copy context.evidenceBindings[i].hash>" }] },
   "policyVersion": "m4-v1",
   "recommendation": "consider|clarify|not-ready",
   "confidence": "high|medium|low",

@@ -8,6 +8,7 @@ import { parseProfileRevision, type ProfileRevision } from "../profile/versions.
 import { readProfileSnapshot, validateProfileRevisionEvidence } from "../profile/storage.js";
 import { assertSafePath, readArtifact } from "../workspace/artifacts.js";
 import { MATCH_POLICY_VERSION } from "./policy.js";
+import type { EvidenceBinding } from "./schema.js";
 
 export type MatchBlocked = {
   status: "blocked";
@@ -21,6 +22,7 @@ export type MatchContext = {
   profile: ProfileRevision;
   profileRevisionHash: string;
   evidence: EvidenceItem[];
+  evidenceBindings: EvidenceBinding[];
   policyVersion: typeof MATCH_POLICY_VERSION;
 };
 
@@ -48,6 +50,7 @@ const safeProfileIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const safeEvidenceIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 class ProfileRevisionUnavailableError extends Error {}
+class AnalysisRevisionUnavailableError extends Error {}
 
 export function isSafeMatchJobId(value: unknown): value is string {
   return typeof value === "string" && safeJobIdPattern.test(value);
@@ -114,7 +117,7 @@ export async function readExactMatchAnalysis(root: string, jobId: string, analys
   const capture = await readVerifiedMatchCapture(root, jobId);
   const path = join(capture.directory, "analyses", `${analysisId}.json`);
   const artifact = await readArtifact(path);
-  if (artifact === undefined) throw new Error("Analysis revision is missing");
+  if (artifact === undefined) throw new AnalysisRevisionUnavailableError("Analysis revision is missing");
 
   let value: unknown;
   try {
@@ -154,17 +157,37 @@ export async function readExactMatchProfile(root: string, revisionId: string): P
   return { revision, revisionHash: artifact.hash };
 }
 
-export async function readMatchContext(root: string, jobId: string, profileRevisionId?: string): Promise<MatchContext | MatchBlocked> {
+export async function readMatchContext(
+  root: string,
+  jobId: string,
+  profileRevisionId?: string,
+  analysisRevisionId?: string,
+): Promise<MatchContext | MatchBlocked> {
   if (!isSafeMatchJobId(jobId)) throw new Error("job id is invalid");
   if (profileRevisionId !== undefined && !isSafeMatchProfileRevisionId(profileRevisionId)) {
     throw new Error("profile revision ID is invalid");
   }
+  if (analysisRevisionId !== undefined && (!safeAnalysisIdPattern.test(analysisRevisionId) || analysisRevisionId === "current")) {
+    throw new Error("analysis revision ID is invalid");
+  }
 
-  let analysis: Awaited<ReturnType<typeof readCurrentAnalysis>>;
+  let analysis: ExactMatchAnalysis | Awaited<ReturnType<typeof readCurrentAnalysis>>;
   try {
-    analysis = await readCurrentAnalysis(root, jobId);
-  } catch {
-    return blocked("capture-or-analysis-needs-repair", "The verified job capture or current source-bound analysis is missing or corrupt. Repair source.md, source.json, raw.json, or publish a valid analysis revision.");
+    analysis = analysisRevisionId === undefined
+      ? await readCurrentAnalysis(root, jobId)
+      : await readExactMatchAnalysis(root, jobId, analysisRevisionId);
+  } catch (error) {
+    const unavailable = error instanceof AnalysisRevisionUnavailableError;
+    return blocked(
+      analysisRevisionId === undefined
+        ? "capture-or-analysis-needs-repair"
+        : unavailable ? "analysis-revision-unavailable" : "analysis-revision-needs-repair",
+      analysisRevisionId === undefined
+        ? "The verified job capture or current source-bound analysis is missing or corrupt. Repair source.md, source.json, raw.json, or publish a valid analysis revision."
+        : unavailable
+          ? "The requested analysis revision is unavailable; choose an existing source-bound revision explicitly."
+          : "The requested analysis revision or its source capture needs repair before matching.",
+    );
   }
   if (analysis === undefined) {
     return blocked("analysis-unpublished", "Publish a valid source-bound analysis revision before matching this job.");
@@ -192,14 +215,15 @@ export async function readMatchContext(root: string, jobId: string, profileRevis
   }
 
   try {
-    const evidence = await readProfileEvidence(root, profile.revision);
+    const evidence = await readProfileEvidenceWithHashes(root, profile.revision);
     return {
       status: "ready",
       job: analysis.revision,
       analysisHash: analysis.revisionHash,
       profile: profile.revision,
       profileRevisionHash: profile.revisionHash,
-      evidence,
+      evidence: evidence.items,
+      evidenceBindings: evidence.bindings,
       policyVersion: MATCH_POLICY_VERSION,
     };
   } catch {
@@ -216,8 +240,13 @@ export async function readCurrentPublishedProfile(root: string): Promise<ExactMa
 }
 
 export async function readProfileEvidence(root: string, revision: ProfileRevision): Promise<EvidenceItem[]> {
-  const ids = [...new Set(revision.claimEvidence.flatMap((claim) => claim.evidenceIds))];
+  return (await readProfileEvidenceWithHashes(root, revision)).items;
+}
+
+export async function readProfileEvidenceWithHashes(root: string, revision: ProfileRevision): Promise<{ items: EvidenceItem[]; bindings: EvidenceBinding[] }> {
+  const ids = [...new Set(revision.claimEvidence.flatMap((claim) => claim.evidenceIds))].sort();
   const evidence: EvidenceItem[] = [];
+  const bindings: EvidenceBinding[] = [];
   for (const id of ids) {
     if (!safeEvidenceIdPattern.test(id) || id.includes("..")) throw new Error("Profile evidence ID is invalid");
     const artifact = await readArtifact(join(resolve(root, "data", "profile", "evidence"), `${id}.json`));
@@ -231,8 +260,9 @@ export async function readProfileEvidence(root: string, revision: ProfileRevisio
     const item = parseEvidenceItem(value);
     if (item.id !== id) throw new Error("Profile evidence ID does not match its filename");
     evidence.push(item);
+    bindings.push({ id, hash: artifact.hash });
   }
-  return evidence;
+  return { items: evidence, bindings };
 }
 
 function blocked(code: string, message: string): MatchBlocked {

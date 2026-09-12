@@ -66,7 +66,9 @@ export function renderJobDetail(detail, note = "", opportunity, opportunityDraft
   const analysis = detail.analysis;
   const decision = detail.decision;
   const assessment = assessmentState?.assessment;
-  const hasCurrentAssessment = Boolean(assessment) || ["current", "stale"].includes(assessmentState?.status) || ["current", "stale"].includes(detail.matchAssessment?.status);
+  const hasCurrentAssessment = Boolean(assessment) && ["current", "stale"].includes(assessmentState?.status ?? "current")
+    || ["current", "stale"].includes(assessmentState?.status)
+    || ["current", "stale"].includes(detail.matchAssessment?.status);
   const title = analysis?.title ?? detail.title ?? "JD chưa có tiêu đề";
   const company = analysis?.company ?? detail.company ?? "Chưa có tên đơn vị";
   return `${pageHeader(title, company)}
@@ -78,6 +80,7 @@ export function renderJobDetail(detail, note = "", opportunity, opportunityDraft
         ${renderOpportunityReview(detail, opportunity, opportunityDraft, opportunityConfirmationKey)}
         ${detail.invalidDerivedData ? `<p class="warning" role="alert">Tài liệu dẫn xuất cần được kiểm tra: ${escapeHtml(detail.invalidDerivedData)}. Hãy yêu cầu Codex kiểm tra tệp liên quan trước khi tải lại.</p>` : ""}
         ${renderAssessmentState(detail, assessmentState)}
+        ${renderAssessmentHistory(detail)}
         ${analysis ? renderAnalysis(analysis) : `<section class="detail-section"><h2>Chưa có phân tích</h2><p>Chưa có phân tích hợp lệ để hiển thị thông tin vị trí.</p>${renderWorkflow(detail, "analysis")}</section>`}
         ${decision ? renderDecision(decision, !hasCurrentAssessment) : `<section class="detail-section"><h2>Chưa có quyết định</h2><p>${analysis ? "Dùng phân tích đã kiểm tra và hồ sơ cá nhân để đánh giá vị trí trong Codex." : "Hoàn thành và kiểm tra phân tích JD trước khi đánh giá cùng hồ sơ cá nhân."}</p>${analysis ? renderWorkflow(detail, "decision") : ""}</section>`}
         <section class="detail-section"><div class="section-heading"><h2>Bản nháp CV</h2>${detail.cvDraft ? downloadLink(detail.id) : ""}</div>${detail.cvDraft ? `<p>${!hasCurrentAssessment && decision?.cvDraftRecommendation === "hold" ? "Đang giữ theo quyết định hiện tại." : "Bản nháp riêng cho vị trí này; không thay thế hồ sơ gốc."}</p><pre class="draft-preview">${escapeHtml(detail.cvDraft)}</pre>` : '<p class="empty-state">Chưa có bản nháp CV. Chỉ tạo bản nháp trong Codex khi quyết định đã được kiểm tra và cho phép tạo.</p>'}</section>
@@ -257,7 +260,7 @@ const assessmentVerdictLabels = {
 const preferenceVerdictLabels = { compatible: "Phù hợp", conflicting: "Mâu thuẫn", unknown: "Chưa rõ" };
 
 function renderAssessmentState(detail, assessmentState = {}) {
-  if (assessmentState?.assessment) return renderAssessment(detail, assessmentState);
+  if (assessmentState?.assessment && assessmentState.status !== "needs-repair") return renderAssessment(detail, assessmentState);
   const viewState = assessmentState?.status ? assessmentState : (detail?.matchAssessment ?? {});
   const status = viewState.status;
   if (status === "blocked") return renderAssessmentBlocked(detail, viewState);
@@ -268,7 +271,7 @@ function renderAssessmentState(detail, assessmentState = {}) {
 
 function renderAssessment(detail, assessmentState) {
   const assessment = assessmentState.assessment;
-  const stale = assessmentState.status === "stale" || assessmentState.freshness?.stale === true;
+  const stale = assessmentState.status === "stale" || assessmentState.freshness?.status === "stale" || assessmentState.freshness?.stale === true;
   const status = stale ? "stale" : "current";
   const freshnessReasons = assessmentState.freshness?.reasons ?? assessmentState.staleReasons ?? [];
   const captureDate = detail.capture?.createdAt ?? detail.captureCreatedAt;
@@ -293,8 +296,15 @@ function assessmentContextFor(assessment, context) {
     && context.analysisHash === assessment.jobRef?.analysisHash
     && context.profile?.id === assessment.profileRef?.revisionId
     && context.profileRevisionHash === assessment.profileRef?.revisionHash
+    && sameEvidenceBindings(context.evidenceBindings, assessment.profileRef?.evidence)
     ? context
     : undefined;
+}
+
+function sameEvidenceBindings(left, right) {
+  return Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length
+    && left.every((entry, index) => entry?.id === right[index]?.id && entry?.hash === right[index]?.hash);
 }
 
 function renderAssessmentRequirements(assessment, sourceRequirements, detail, assessmentState) {
@@ -377,6 +387,19 @@ function renderAssessmentWorkflow(detail, assessment) {
   const profileRevision = assessment?.profileRef?.revisionId;
   const profileArgument = profileRevision ? ` --profile-revision ${escapeHtml(profileRevision)}` : "";
   return `<details class="workflow-reminder assessment-rerun"><summary>Chạy lại đánh giá</summary><p>Đây chỉ là hướng dẫn cục bộ; trang này không tự chạy model và không gửi dữ liệu ra ngoài.</p><p>Trong Codex, đọc <code>skills/assess-job/SKILL.md</code>, lấy context của <code>${id}</code> rồi kiểm tra và lưu bản assessment đã liên kết. Có thể kiểm tra bằng <code>career match context ${id}${profileArgument}</code> và <code>career match validate &lt;assessment.json&gt;</code>.</p><p>Quay lại đây và chọn “Tải lại dữ liệu” để xem kết quả.</p></details>`;
+}
+
+function renderAssessmentHistory(detail) {
+  const history = detail?.matchAssessmentHistory ?? [];
+  if (!history.length) return "";
+  const rows = history.map((entry) => {
+    const status = entry.status ?? (entry.active ? "current" : "stale");
+    const statusLabel = assessmentStatusLabels[status] ?? status;
+    const recommendation = recommendationLabels[entry.recommendation] ?? entry.recommendation ?? "Chưa rõ";
+    const href = `/api/jobs/${encodeURIComponent(detail.id)}/assessments/${encodeURIComponent(entry.id)}`;
+    return `<li class="assessment-history-item"><a href="${href}"><strong>${escapeHtml(entry.id)}</strong></a><span>${escapeHtml(entry.createdAt)}</span><span>${escapeHtml(recommendation)}</span><span class="decision-status status-${escapeHtml(status)}">${escapeHtml(statusLabel)}${entry.active ? " · đang dùng" : ""}</span></li>`;
+  }).join("");
+  return `<section class="detail-section assessment-history" aria-labelledby="assessment-history-heading"><div class="section-heading"><h2 id="assessment-history-heading">Lịch sử đánh giá</h2><span class="muted">Chỉ đọc trên máy</span></div><ul>${rows}</ul></section>`;
 }
 
 function renderDecision(decision, legacy = false) {

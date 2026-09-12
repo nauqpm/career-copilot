@@ -87,15 +87,17 @@ export function initializeBrowserApp(browser = globalThis) {
       const response = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/assessments/current`);
       let context;
       const profileRevision = response.assessment?.profileRef?.revisionId;
-      if (profileRevision) {
+      const analysisRevision = response.assessment?.jobRef?.analysisId;
+      if (profileRevision && analysisRevision) {
         try {
-          const candidateContext = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/match-context?profileRevision=${encodeURIComponent(profileRevision)}`);
+          const candidateContext = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/match-context?profileRevision=${encodeURIComponent(profileRevision)}&analysisRevision=${encodeURIComponent(analysisRevision)}`);
           if (candidateContext?.status === "ready") context = candidateContext;
         } catch {
           // A stale assessment remains useful even when its old context cannot be reconstructed.
         }
       }
-      return { ...response, context: context ?? null, status: response.freshness?.stale ? "stale" : "current" };
+      const freshnessStatus = response.freshness?.status ?? (response.freshness?.stale ? "stale" : "current");
+      return { ...response, context: context ?? null, status: freshnessStatus };
     } catch (error) {
       if (error.status === 404) {
         try {

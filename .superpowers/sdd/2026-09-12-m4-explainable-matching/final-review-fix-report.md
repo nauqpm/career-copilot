@@ -107,3 +107,48 @@ The package test script was intentionally not edited. The new focused regression
 Manual browser verification is **blocked**, not passed: the available Codex in-app browser reports `IAB visibility is not supported in a subagent thread`, and hidden local-tab navigation is client-blocked. Automated HTTP, renderer, controller and race tests provide the UI evidence.
 
 The assessment remains an evidence-linked advisory snapshot, not a semantic matcher or submission authority. Provider/model execution, semantic equivalence, ontology, scores/ranking, salary/commute inference, document generation, profile mutation, approvals, connectors, database/remote storage and external submission remain intentionally deferred.
+
+## Round 1 compatibility fix — preserve earlier assessment revisions (2026-09-12)
+
+**Commit subject:** `fix: preserve earlier assessment revisions`
+
+### Outcome
+
+The review follow-up now preserves assessments written before evidence bindings existed. New `MatchAssessment` publication uses schemaVersion 2 and requires `profileRef.evidence`; the stored parser has a narrow schemaVersion-1 compatibility branch for old artifacts whose profile reference contains only revision ID/hash. The v1 branch validates `contentHash` against that exact original object shape, does not synthesize evidence hashes, and returns a stored legacy assessment for history only. Freshness classifies it as unbound `needs-repair`, never `current` or `stale`. A v1 current pointer cannot expose a recommendation through current/detail APIs and receives the generic repair response, while the history API remains available with ID, date, recommendation, artifact hash, status and active pointer marker. `saveMatchAssessment` accepts only the new v2 type, so legacy input cannot be republished.
+
+The normal package test boundary now includes `tests/m4-final-review.test.ts`; the compatibility fixtures cover both recovery history and rejection of v1 publication. M2/M3 artifacts, existing commits and unrelated untracked files were preserved.
+
+### TDD evidence
+
+#### RED
+
+The old-v1 fixture was added before implementation and computes its hash over the pre-binding shape. The first compatibility run failed at module loading because `parseStoredMatchAssessment` did not exist. After the parser and storage branch were added, the focused 49-test run reached **48 passed, 1 failed**: the history route still called the strict current-read path and returned generic `409` instead of exposing repair history. That failure drove the narrow HTTP route change; no test was weakened.
+
+#### GREEN
+
+The final compatibility-focused run is **49 passed, 0 failed, 0 skipped**. It proves that the original v1 hash is accepted without adding bindings, that the v1 record stays visible as active `needs-repair` history, that current reads remain generic repair responses, and that v1 cannot be saved as a new assessment. The existing matching, context, storage, API, renderer and M3 opportunity regressions remain green.
+
+### Implementation details
+
+- `MatchAssessment` is now a schemaVersion-2 publishable type; `LegacyMatchAssessment` and `StoredMatchAssessment` are internal compatibility surface kept to the parser/storage boundary.
+- `parseMatchAssessment` remains v2-only for new validation and publication. `parseStoredMatchAssessment` selects the exact v1 or v2 shape and validates the corresponding content hash.
+- `readMatchHistory` accepts validated v1 artifacts and marks them `needs-repair`; `readCurrentMatch` rejects v1 before returning an assessment; freshness never evaluates v1 as stale/current.
+- The history endpoint no longer requires a readable current snapshot, so recovery metadata is available even when the pointer targets a v1 artifact.
+- `skills/assess-job/SKILL.md`, README and local M4 contracts document v2 publication and v1 recovery behavior.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| Focused matching/schema/storage/context/flow suite | **49 passed, 0 failed, 0 skipped** |
+| Complete registered `npm test` | **295 passed, 0 failed, 0 skipped** |
+| Node built-in coverage over every registered test path | **295 passed, 0 failed, 0 skipped**; all files line 97.15%, branch 88.04%, function 97.09% |
+| `npm run build` | **passed** (`tsc`) |
+| `pnpm audit --audit-level=high` | **no known vulnerabilities found** |
+| `git diff --check` | **passed**; LF/CRLF normalization warnings only |
+
+Changed production coverage from the built-in reporter (line/branch/function) is `src/match/schema.ts` **100.00/83.97/100.00**, `src/match/storage.ts` **94.18/86.78/92.00**, and `src/web/server.ts` **98.21/92.44/89.36**. Manual browser verification remains **blocked**, not passed, because the available in-app browser is unavailable in this subagent. No push or external write was performed.
+
+### Concerns and preservation
+
+Legacy v1 assessments intentionally remain repair/unbound until a new v2 assessment is produced; the system does not guess or backfill evidence hashes. Manual browser verification is the only outstanding environment limitation. Unrelated untracked M3 plans/reports and `.tmp-pr5-review/` remain untouched.

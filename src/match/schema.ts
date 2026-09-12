@@ -52,8 +52,7 @@ export type EvidenceBinding = {
   hash: string;
 };
 
-export type MatchAssessment = {
-  schemaVersion: 1;
+type MatchAssessmentFields = {
   id: string;
   createdAt: string;
   createdBy: {
@@ -72,11 +71,6 @@ export type MatchAssessment = {
     analysisId: string;
     analysisHash: string;
   };
-  profileRef: {
-    revisionId: string;
-    revisionHash: string;
-    evidence: EvidenceBinding[];
-  };
   policyVersion: typeof MATCH_POLICY_VERSION;
   recommendation: (typeof RECOMMENDATIONS)[number];
   confidence: (typeof CONFIDENCE_LEVELS)[number];
@@ -88,6 +82,25 @@ export type MatchAssessment = {
   anomalies: Finding[];
 };
 
+export type MatchAssessment = MatchAssessmentFields & {
+  schemaVersion: 2;
+  profileRef: {
+    revisionId: string;
+    revisionHash: string;
+    evidence: EvidenceBinding[];
+  };
+};
+
+type LegacyMatchAssessment = MatchAssessmentFields & {
+  schemaVersion: 1;
+  profileRef: {
+    revisionId: string;
+    revisionHash: string;
+  };
+};
+
+type StoredMatchAssessment = MatchAssessment | LegacyMatchAssessment;
+
 const requirementPriorities = new Set<RequirementPriority>(["required", "preferred", "unknown"]);
 const requirementVerdicts = new Set<string>(REQUIREMENT_VERDICTS);
 const preferenceVerdicts = new Set<string>(PREFERENCE_VERDICTS);
@@ -95,6 +108,17 @@ const recommendations = new Set<string>(RECOMMENDATIONS);
 const confidenceLevels = new Set<string>(CONFIDENCE_LEVELS);
 
 export function parseMatchAssessment(value: unknown): MatchAssessment {
+  const parsed = parseAssessment(value, 2);
+  if (parsed.schemaVersion !== 2) throw new Error("schemaVersion must be 2");
+  return parsed;
+}
+
+export function parseStoredMatchAssessment(value: unknown): StoredMatchAssessment {
+  if (isRecord(value) && value.schemaVersion === 1) return parseAssessment(value, 1);
+  return parseMatchAssessment(value);
+}
+
+function parseAssessment(value: unknown, schemaVersion: 1 | 2): StoredMatchAssessment {
   rejectScore(value);
   if (!isRecord(value)) throw new Error("Match assessment must be a JSON object");
   assertKnownKeys(value, [
@@ -102,13 +126,13 @@ export function parseMatchAssessment(value: unknown): MatchAssessment {
     "recommendation", "confidence", "summary", "requirementAssessments", "preferenceChecks", "blockers", "questions", "anomalies",
   ], "assessment");
 
-  if (value.schemaVersion !== 1) throw new Error("schemaVersion must be 1");
+  if (value.schemaVersion !== schemaVersion) throw new Error(`schemaVersion must be ${schemaVersion}`);
   const id = safeId(value.id, "id");
   const createdAt = strictTimestamp(value.createdAt, "createdAt");
   const createdBy = parseCreator(value.createdBy);
   const providedHash = sha256(value.contentHash, "contentHash");
   const jobRef = parseJobRef(value.jobRef);
-  const profileRef = parseProfileRef(value.profileRef);
+  const profileRef = parseProfileRef(value.profileRef, schemaVersion);
   if (value.policyVersion !== MATCH_POLICY_VERSION) throw new Error("policyVersion must be m4-v1");
   if (!recommendations.has(value.recommendation as string)) throw new Error("recommendation is invalid");
   if (!confidenceLevels.has(value.confidence as string)) throw new Error("confidence is invalid");
@@ -119,8 +143,8 @@ export function parseMatchAssessment(value: unknown): MatchAssessment {
   const questions = parseQuestions(value.questions);
   const anomalies = parseFindings(value.anomalies, "anomalies", false);
 
-  const parsed: MatchAssessment = {
-    schemaVersion: 1,
+  const parsed = {
+    schemaVersion,
     id,
     createdAt,
     createdBy,
@@ -136,7 +160,7 @@ export function parseMatchAssessment(value: unknown): MatchAssessment {
     blockers,
     questions,
     anomalies,
-  };
+  } as StoredMatchAssessment;
   if (hashWithoutContent(parsed) !== providedHash) throw new Error("contentHash does not match assessment");
   return parsed;
 }
@@ -176,14 +200,14 @@ function parseJobRef(value: unknown): MatchAssessment["jobRef"] {
   };
 }
 
-function parseProfileRef(value: unknown): MatchAssessment["profileRef"] {
+function parseProfileRef(value: unknown, schemaVersion: 1 | 2): MatchAssessment["profileRef"] | LegacyMatchAssessment["profileRef"] {
   if (!isRecord(value)) throw new Error("profileRef must be an object");
-  assertKnownKeys(value, ["revisionId", "revisionHash", "evidence"], "profileRef");
-  return {
+  assertKnownKeys(value, schemaVersion === 2 ? ["revisionId", "revisionHash", "evidence"] : ["revisionId", "revisionHash"], "profileRef");
+  const profileRef = {
     revisionId: safeId(value.revisionId, "profileRef.revisionId"),
     revisionHash: sha256(value.revisionHash, "profileRef.revisionHash"),
-    evidence: parseEvidenceBindings(value.evidence),
   };
+  return schemaVersion === 2 ? { ...profileRef, evidence: parseEvidenceBindings(value.evidence) } : profileRef;
 }
 
 function parseEvidenceBindings(value: unknown): EvidenceBinding[] {
@@ -344,7 +368,7 @@ function sha256(value: unknown, field: string): string {
   return value.trim();
 }
 
-function hashWithoutContent(value: MatchAssessment): string {
+function hashWithoutContent(value: StoredMatchAssessment): string {
   const { contentHash: _ignored, ...withoutContentHash } = value;
   return contentHash(JSON.stringify(withoutContentHash));
 }

@@ -19,7 +19,7 @@ function withContentHash(value: Omit<MatchAssessment, "contentHash">): MatchAsse
 
 function assessment(overrides: Record<string, unknown> = {}): MatchAssessment {
   const base: Omit<MatchAssessment, "contentHash"> = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "assessment-one",
     createdAt: "2026-09-12T07:00:00.000Z",
     createdBy: {
@@ -147,7 +147,7 @@ function assessment(overrides: Record<string, unknown> = {}): MatchAssessment {
 test("parses an evidence-linked assessment without scoring or authority fields", () => {
   const parsed = parseMatchAssessment(assessment());
 
-  assert.equal(parsed.schemaVersion, 1);
+  assert.equal(parsed.schemaVersion, 2);
   assert.equal(parsed.policyVersion, "m4-v1");
   assert.equal(parsed.recommendation, "clarify");
   assert.equal(parsed.confidence, "medium");

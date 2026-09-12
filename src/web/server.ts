@@ -175,9 +175,9 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       setNoStore(response);
       const jobId = decodePathSegment(assessmentsMatch[1]!);
       await requireMatchJob(root, jobId);
-      const current = await readCurrentMatchOrRepair(root, jobId);
       const history = await readMatchHistoryOrRepair(root, jobId);
-      setVersion(response, current?.pointerHash ?? null);
+      const pointerArtifact = await readArtifact(join(resolve(root), "data", "jobs", jobId, "assessments", "current.json"));
+      setVersion(response, pointerArtifact?.hash ?? null);
       return sendJson(response, 200, history);
     }
 
@@ -202,7 +202,9 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       await requireMatchJob(root, jobId);
       await readCurrentMatchOrRepair(root, jobId);
       const history = await readMatchHistoryOrRepair(root, jobId);
-      if (!history.assessments.some((entry) => entry.id === assessmentId)) return sendJson(response, 404, { error: "Not found" });
+      const historyEntry = history.assessments.find((entry) => entry.id === assessmentId);
+      if (historyEntry === undefined) return sendJson(response, 404, { error: "Not found" });
+      if (historyEntry.status === "needs-repair") return sendJson(response, 409, { error: "Assessment data needs repair before it can be read." });
       const artifact = await readArtifact(matchAssessmentPath(root, jobId, assessmentId));
       if (artifact === undefined) return sendJson(response, 404, { error: "Not found" });
       const assessment = parseMatchAssessment(JSON.parse(artifact.content) as unknown);

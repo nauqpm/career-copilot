@@ -493,3 +493,24 @@ The package test script remains unchanged; the new final-review file was run exp
 The regressions reproduce corrupt current profile pointers, forged same-ID evidence, changed source bytes, exact historical analysis/profile selection, private headers, generic repair responses, recommendation suppression and safe history rendering. Existing M3 opportunity draft/race behavior remains covered and green. M2 profile revision schema, legacy `analysis.json`/`decision.json`, source bytes, private data and unrelated untracked M3 artifacts were preserved. Manual browser verification remains **blocked**, not passed, because the available in-app browser is unavailable in this subagent and hidden local-tab navigation is client-blocked; automated API/renderer/controller tests are the UI evidence.
 
 Residual risks are the explicit deferred capabilities: provider/model execution, semantic matching/equivalence, score/ranking, salary/commute inference, document/CV generation, profile mutation, approvals, connectors, database/remote storage and external submission. The history links are read-only and add no apply, mutation, score or provider action.
+
+## Final review fix round 1 — preserve earlier assessment revisions (2026-09-12)
+
+This compatibility fix introduces an explicit assessment schema boundary. New publishable `MatchAssessment` artifacts are schema-version 2 and require the complete `profileRef.evidence` binding list. Stored schema-version-1 artifacts from before evidence bindings remain readable in history with their original ID, creation date, recommendation and validated content hash, but are classified as unbound `needs-repair`; they are never treated as current or stale and are not silently migrated. A schema-version-1 current pointer produces the same generic repair response as other unusable current snapshots, while the history route remains available for recovery. No evidence hashes are synthesized.
+
+### TDD RED evidence
+
+The compatibility fixtures were added first with an old schema-version-1 artifact whose content hash was computed over its original no-evidence shape. The first run was intentionally RED at module loading because the stored-assessment parser had not yet been added. After the parser/storage compatibility path was introduced, the focused 49-test run recorded **48 passed, 1 failed**: the history endpoint still required a readable current assessment and returned generic `409` instead of exposing the repair-marked v1 history. Removing that unnecessary current-read gate made the recovery history route green. A second regression verifies that new publication rejects the legacy unbound artifact.
+
+### GREEN and verification evidence
+
+| Gate | Result |
+| --- | --- |
+| Focused matching/schema/storage/context/flow suite, including compatibility fixtures | **49 passed, 0 failed, 0 skipped** |
+| Complete registered `npm test` | **295 passed, 0 failed, 0 skipped** |
+| Node built-in coverage over every registered test path | **295 passed, 0 failed, 0 skipped**; all files 97.15% line, 88.04% branch, 97.09% function coverage |
+| `npm run build` | **passed** (`tsc`) |
+| `pnpm audit --audit-level=high` | **no known vulnerabilities found** |
+| `git diff --check` | **passed**; only LF/CRLF normalization warnings |
+
+The compatibility behavior is covered at schema, storage and HTTP boundaries: the legacy content hash is checked against the original v1 object shape; history exposes the v1 snapshot with `needs-repair` and `active`; current/detail reads return a generic repair response; and v1 input cannot be republished. The package `test` script now registers `tests/m4-final-review.test.ts`, so the seven prior final-review regressions plus the two compatibility regressions run in the normal suite. Manual browser verification remains **blocked**, not passed, by the unavailable subagent browser surface. Unrelated untracked M3 artifacts remain untouched.

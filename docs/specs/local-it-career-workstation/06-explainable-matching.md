@@ -39,7 +39,7 @@ Nếu analysis invalid, capture missing/corrupt, profile revision không tồn t
 
 ```ts
 type MatchAssessment = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   createdAt: string;
   createdBy: { kind: "agent"; role: "match-analyst"; skillVersion: string; model: string; promptHash: string };
@@ -64,7 +64,7 @@ Trong artifact, requirement quote/location is resolved from the exact source-bou
 
 `confidence` nói độ đầy đủ/độ rõ của input cho recommendation: `low` khi JD mơ hồ, source missing hoặc nhiều required facts chưa xác minh. Nó không phải confidence năng lực ứng viên.
 
-Assessment freshness là một trạng thái rõ ràng: `current` khi toàn bộ capture, analysis, profile và evidence binding vẫn khớp; `stale` khi một input hợp lệ mới hơn hoặc evidence artifact hợp lệ đổi bytes; `needs-repair` khi pointer, capture, revision hoặc evidence bị thiếu, hỏng hoặc không nhất quán. Current/detail API trả `409` generic cho `needs-repair` để không hiển thị recommendation chưa còn đáng tin. Context historical có thể nhận `analysisRevision` cùng `profileRevision` và đọc đúng artifact đã bind, không rơi về current; response là `no-store` và ready context mang ETag.
+Assessment freshness là một trạng thái rõ ràng: `current` khi toàn bộ capture, analysis, profile và evidence binding vẫn khớp; `stale` khi một input hợp lệ mới hơn hoặc evidence artifact hợp lệ đổi bytes; `needs-repair` khi pointer, capture, revision hoặc evidence bị thiếu, hỏng hoặc không nhất quán. Current/detail API trả `409` generic cho `needs-repair` để không hiển thị recommendation chưa còn đáng tin. Context historical có thể nhận `analysisRevision` cùng `profileRevision` và đọc đúng artifact đã bind, không rơi về current; response là `no-store` và ready context mang ETag. Artifact schema-version 1 từ trước khi có evidence binding vẫn xuất hiện trong history với trạng thái unbound/repair để recovery, nhưng không được xem là current/stale hoặc republish trực tiếp.
 
 ## 5. Logic recommendation, không dùng score
 

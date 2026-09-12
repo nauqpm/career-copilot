@@ -96,7 +96,7 @@ test("binds a context-built assessment to the exact analysis and profile artifac
   if (context.status !== "ready") return;
 
   const base: Omit<MatchAssessment, "contentHash"> = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "assessment-from-context",
     createdAt: "2026-09-12T07:00:00.000Z",
     createdBy: {

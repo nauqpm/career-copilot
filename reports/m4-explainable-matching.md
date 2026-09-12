@@ -157,3 +157,23 @@ The focused regressions cover complete evidence-set binding, same-ID valid evide
 Manual browser verification remains **blocked**, not passed: the available in-app browser reports `IAB visibility is not supported in a subagent thread`, and hidden local-tab navigation is rejected by the client. Automated HTTP, renderer and controller evidence is the relied-on UI verification.
 
 Residual risks remain limited to the documented local-only scope: semantic matching, provider execution, scores/ranking, ontology/equivalence, document generation, profile mutation, approvals, connectors, remote storage and external submission remain deferred. The new history links are read-only API inspection links; they do not add apply, mutation, score or provider actions.
+
+## Final review fix round 1 — preserve earlier assessment revisions (2026-09-12)
+
+New publishable assessments now use schemaVersion 2 and require `profileRef.evidence`. Stored schemaVersion 1 artifacts written before evidence bindings are parsed against their original shape, including their original contentHash calculation, and remain visible in history as unbound `needs-repair` records. Their ID, date, recommendation and artifact hash remain available for recovery; they are not treated as current or stale, no evidence hashes are invented, and new publication rejects them. A v1 current pointer gives current/detail consumers a generic repair response while the history route still returns the repair-marked entry.
+
+### TDD RED/GREEN evidence
+
+The new compatibility fixture was written before the stored parser existed, producing the expected module-load RED. Once parsing and storage support were present, the focused **49-test** run recorded **48 passed and 1 failed** because the history HTTP route still required a readable current assessment and returned `409`; the route was then narrowed to read history independently. The final focused run is **49 passed, 0 failed, 0 skipped**. The package test script now includes `tests/m4-final-review.test.ts`, protecting the seven existing final-review regressions and the two v1 compatibility regressions.
+
+### Fresh verification
+
+| Gate | Result |
+| --- | --- |
+| Registered `npm test` | **295 passed, 0 failed, 0 skipped** |
+| Node built-in coverage over the registered paths | **295 passed, 0 failed, 0 skipped**; all files 97.15% line, 88.04% branch, 97.09% function |
+| `npm run build` | **passed** (`tsc`) |
+| `pnpm audit --audit-level=high` | **no known vulnerabilities found** |
+| `git diff --check` | **passed**; LF/CRLF normalization warnings only |
+
+Manual browser verification remains blocked by the unavailable subagent browser surface. No legacy artifact was migrated or rewritten, and unrelated untracked M3 plans/reports plus `.tmp-pr5-review/` remain preserved.

@@ -199,11 +199,11 @@ It MUST preserve these distinctions:
 
 ### 7.2 Match assessment
 
-The existing `JobDecision` remains a compatible legacy assessment. The delivered bounded path adds a `MatchAssessment` that preserves `consider`, `clarify`, and `not-ready` as advisory dispositions while binding exact source, analysis, profile and policy hashes:
+The existing `JobDecision` remains a compatible legacy assessment. The delivered bounded path adds a schema-version-2 `MatchAssessment` that preserves `consider`, `clarify`, and `not-ready` as advisory dispositions while binding exact source, analysis, profile and policy hashes:
 
 ```ts
 type MatchAssessment = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   createdAt: string;
   createdBy: { kind: "agent"; role: "match-analyst"; skillVersion: string; model: string; promptHash: string };
@@ -226,7 +226,7 @@ type MatchAssessment = {
 
 Assessment evidence MUST identify a job requirement/fact and a profile evidence item when claiming a match. A gap may state that no matching evidence exists; it MUST NOT become a negative claim about the candidate. A blocker is reserved for a stated hard constraint or candidate-declared non-negotiable. Confidence describes evidence completeness, not employability probability.
 
-Assessment freshness is read at display time. The current implementation reports policy-version change, newer analysis, newer profile revision, unpublished/repair-marked analysis or profile, and changed/repair-marked capture/source bytes. It never rewrites an old assessment. The local skill handoff reads `skills/analyze-job/SKILL.md` and `skills/assess-job/SKILL.md`; skills produce JSON proposals, while the CLI/server own validation, persistence and read-only API/UI presentation. CV generation, profile edits, approvals, connectors, database storage and external submission are outside this subset.
+Assessment freshness is read at display time. The current implementation reports policy-version change, newer analysis, newer profile revision, unpublished/repair-marked analysis or profile, and changed/repair-marked capture/source bytes. It never rewrites an old assessment. Schema-version-1 assessment artifacts from before evidence bindings remain readable in history as `needs-repair`/unbound recovery entries; they are not treated as current or stale and cannot be republished without a new schema-version-2 assessment. The local skill handoff reads `skills/analyze-job/SKILL.md` and `skills/assess-job/SKILL.md`; skills produce JSON proposals, while the CLI/server own validation, persistence and read-only API/UI presentation. CV generation, profile edits, approvals, connectors, database storage and external submission are outside this subset.
 
 ### 7.3 Document revision and grounding review
 

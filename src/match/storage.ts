@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { readCurrentAnalysis } from "../job/analysis-storage.js";
 import { profileClaimPaths, type ProfileRevision } from "../profile/versions.js";
 import { assertRequirementCoverage, MATCH_POLICY_VERSION, isSafeEvidenceId, isSafeMatchId } from "./policy.js";
-import { parseMatchAssessment, type EvidenceBinding, type MatchAssessment } from "./schema.js";
+import { parseMatchAssessment, parseStoredMatchAssessment, type EvidenceBinding, type MatchAssessment } from "./schema.js";
 import {
   readCurrentPublishedProfile,
   readExactMatchAnalysis,
@@ -40,6 +40,7 @@ export type MatchHistory = {
 
 export type MatchFreshnessStatus = "current" | "stale" | "needs-repair";
 export type MatchFreshness = { status: MatchFreshnessStatus; reasons: string[] };
+type StoredMatchAssessment = ReturnType<typeof parseStoredMatchAssessment>;
 
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
 const safeJobIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -55,6 +56,7 @@ export async function readCurrentMatch(root: string, jobId: string): Promise<Mat
     throw new Error("Assessment current pointer references a missing or changed assessment");
   }
   const assessment = parseStoredAssessment(artifact.content, jobId, pointer.assessmentId);
+  if (assessment.schemaVersion !== 2) throw new Error("Assessment schema version needs repair before it can be read");
   return { assessment, assessmentHash: artifact.hash, pointerHash: pointerArtifact.hash };
 }
 
@@ -108,7 +110,7 @@ export async function readMatchHistory(root: string, jobId: string): Promise<Mat
         assessmentHash: artifact.hash,
         recommendation: assessment.recommendation,
         status: freshness.status,
-        active: current?.assessmentId === assessment.id && current.assessmentHash === artifact.hash,
+        active: current?.assessmentId === assessment.id && current?.assessmentHash === artifact.hash,
       });
     } catch {
       // Malformed, mismatched and source-stale orphan bytes remain on disk for repair,
@@ -146,7 +148,10 @@ export async function saveMatchAssessment(
   return { assessment, assessmentHash, pointerHash };
 }
 
-export async function assessmentFreshness(root: string, assessment: MatchAssessment): Promise<MatchFreshness> {
+export async function assessmentFreshness(root: string, assessment: StoredMatchAssessment): Promise<MatchFreshness> {
+  if (assessment.schemaVersion === 1) {
+    return { status: "needs-repair", reasons: ["assessment schema version 1 has no evidence bindings"] };
+  }
   const staleReasons: string[] = [];
   const repairReasons: string[] = [];
   if (assessment.policyVersion !== MATCH_POLICY_VERSION) staleReasons.push("matcher policy version changed");
@@ -302,8 +307,8 @@ function sameEvidenceBindings(left: ReadonlyArray<EvidenceBinding>, right: Reado
   });
 }
 
-function parseStoredAssessment(content: string, jobId: string, filenameId: string): MatchAssessment {
-  const assessment = parseMatchAssessment(readJson(content, "Assessment"));
+function parseStoredAssessment(content: string, jobId: string, filenameId: string): StoredMatchAssessment {
+  const assessment = parseStoredMatchAssessment(readJson(content, "Assessment"));
   if (assessment.id !== filenameId) throw new Error("Assessment filename does not match its ID");
   if (assessment.jobRef.jobId !== jobId) throw new Error("Assessment job ID does not match its directory");
   return assessment;

@@ -83,7 +83,7 @@ async function fixture() {
 
 function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessment-one"): MatchAssessment {
   const base: Omit<MatchAssessment, "contentHash"> = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     createdAt: "2026-09-12T07:00:00.000Z",
     createdBy: {

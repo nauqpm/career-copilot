@@ -13,7 +13,7 @@ Return JSON only. Produce the `MatchAssessment` shape accepted by `parseMatchAss
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "assessment-...",
   "createdAt": "<RFC3339 UTC>",
   "createdBy": {

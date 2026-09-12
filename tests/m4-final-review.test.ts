@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,7 @@ import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
 import { readMatchContext } from "../src/match/context.js";
 import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
-import { assessmentFreshness, saveMatchAssessment } from "../src/match/storage.js";
+import { assessmentFreshness, readCurrentMatch, readMatchHistory, saveMatchAssessment } from "../src/match/storage.js";
 import { createLocalJob } from "../src/workspace/storage.js";
 import { contentHash, readArtifact } from "../src/workspace/artifacts.js";
 import { renderJobDetail } from "../public/render.js";
@@ -82,7 +82,7 @@ async function fixture() {
 
 function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessment-one"): MatchAssessment {
   const base: Omit<MatchAssessment, "contentHash"> = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     createdAt: "2026-09-12T07:00:00.000Z",
     createdBy: {
@@ -124,6 +124,17 @@ function assessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessm
 function withChangedHash(value: MatchAssessment, changes: Partial<MatchAssessment>): MatchAssessment {
   const next = { ...value, ...changes } as Omit<MatchAssessment, "contentHash">;
   return { ...next, contentHash: hashMatchAssessment(next) };
+}
+
+function legacyAssessmentFor(state: Awaited<ReturnType<typeof fixture>>, id = "assessment-v1") {
+  const current = assessmentFor(state, id);
+  const { evidence: _evidence, ...legacyProfileRef } = current.profileRef;
+  const { contentHash: _ignored, ...withoutHash } = {
+    ...current,
+    schemaVersion: 1,
+    profileRef: legacyProfileRef,
+  };
+  return { ...withoutHash, contentHash: hash(JSON.stringify(withoutHash)) };
 }
 
 async function startTestServer(root: string) {
@@ -252,4 +263,45 @@ test("job detail renders local assessment history with status and safe inspectio
   assert.match(html, /Cần làm rõ/);
   assert.match(html, /status-stale/);
   assert.match(html, /\/api\/jobs\/job-one\/assessments\/assessment-two/);
+});
+
+test("preserves an old unbound v1 assessment in repair history without trusting it as current", async () => {
+  const state = await fixture();
+  const legacy = legacyAssessmentFor(state);
+  const assessmentDirectory = join(state.directory, "assessments");
+  await mkdir(assessmentDirectory, { recursive: true });
+  const serialized = `${JSON.stringify(legacy, null, 2)}\n`;
+  const assessmentHash = hash(serialized);
+  await writeFile(join(assessmentDirectory, "assessment-v1.json"), serialized, "utf8");
+  await writeFile(join(assessmentDirectory, "assessment-v1-invalid.json"), `${JSON.stringify({ ...legacy, id: "assessment-v1-invalid", contentHash: hash("not-the-legacy-object") }, null, 2)}\n`, "utf8");
+  await writeFile(join(assessmentDirectory, "current.json"), `${JSON.stringify({ schemaVersion: 1, assessmentId: "assessment-v1", assessmentHash })}\n`, "utf8");
+
+  const history = await readMatchHistory(state.root, state.job.id);
+  assert.deepEqual(history.assessments.map((entry) => entry.id), ["assessment-v1"]);
+  assert.deepEqual(history.assessments, [{
+    id: "assessment-v1",
+    createdAt: legacy.createdAt,
+    assessmentHash,
+    recommendation: "consider",
+    status: "needs-repair",
+    active: true,
+  }]);
+  await assert.rejects(readCurrentMatch(state.root, state.job.id), /schema|repair|version/i);
+
+  const app = await startTestServer(state.root);
+  try {
+    const currentResponse = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/current`);
+    assert.equal(currentResponse.status, 409);
+    assert.deepEqual(await currentResponse.json(), { error: "Assessment data needs repair before it can be read." });
+    const historyResponse = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments`);
+    assert.equal(historyResponse.status, 200);
+    assert.equal((await historyResponse.json() as { assessments: Array<{ id: string; status: string }> }).assessments[0]?.status, "needs-repair");
+  } finally {
+    await app.close();
+  }
+});
+
+test("new publication rejects a v1 assessment without evidence bindings", async () => {
+  const state = await fixture();
+  await assert.rejects(saveMatchAssessment(state.root, state.job.id, legacyAssessmentFor(state), null), /schema|evidence|version/i);
 });

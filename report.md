@@ -225,3 +225,38 @@ pnpm exec .\node_modules\.bin\tsx.CMD --test tests/match-schema.test.ts
 ```
 
 Result: **11 passed, 0 failed, 0 skipped** after the minimal separate evidence-ID validator and skill contract correction.
+
+## Task 4 — locked context, assessment history and freshness (2026-09-12)
+
+Task 4 adds only the local match context and assessment storage layer. A context can be ready only when the verified capture, current source-bound analysis, explicitly requested or current published profile revision, and all profile evidence artifacts validate together. Assessment writes validate exact analysis requirement IDs/modalities, selected-profile evidence mappings and preference claim paths, capture/source/analysis/profile hashes, then create the immutable assessment before advancing the optimistic `assessments/current.json` pointer. History isolates malformed or filename-mismatched orphans, current reads fail closed for dangling pointers, and safe-path/filesystem failures propagate. Freshness reports policy drift, newer analysis/profile revisions, and capture/source repair conditions without rewriting prior bytes. Legacy files remain untouched and no run metadata is invented by the context reader.
+
+### RED evidence
+
+Commands:
+
+```powershell
+pnpm exec tsx --test tests/match-context.test.ts tests/match-storage.test.ts
+.\node_modules\.bin\tsx.CMD --test tests/match-context.test.ts tests/match-storage.test.ts
+```
+
+The package wrapper could not resolve `tsx` in this restricted Windows shell, and the sandboxed local invocation hit the known Node `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` startup boundary. The equivalent local-bin run with authorized Node path resolution then failed as intended before production modules existed: **2 test files failed, 0 passed**, with `ERR_MODULE_NOT_FOUND` for `src/match/context.js` and `src/match/storage.js`.
+
+### GREEN and regression evidence
+
+Commands:
+
+```powershell
+.\node_modules\.bin\tsx.CMD --test tests/match-context.test.ts tests/match-storage.test.ts
+.\node_modules\.bin\tsx.CMD --test tests/match-context.test.ts tests/match-storage.test.ts tests/match-schema.test.ts tests/job-analysis-revisions.test.ts tests/job-analysis-storage.test.ts tests/job-input.test.ts tests/job-capture.test.ts tests/profile-versions.test.ts tests/profile-evidence.test.ts tests/m3-opportunity-flow.test.ts
+$testFiles = @(rg --files tests -g '*.test.ts'); & '.\node_modules\.bin\tsx.CMD' --test $testFiles
+npm run build
+git diff --check
+```
+
+- Task 4 focused context/storage suite: **11 passed, 0 failed, 0 skipped**.
+- Task 4 plus schema, analysis, capture, profile and M3 opportunity regressions: **96 passed, 0 failed, 0 skipped**.
+- Complete repository test tree, including the new Task 4 files: **256 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- Whitespace check: **passed**.
+
+The focused fixtures cover exact profile selection without fallback, blocked legacy/corrupt inputs, immutable assessment bytes, reserved IDs, stale pointer conflicts with orphan retention, live reference/hash validation, dangling pointer repair, malformed/renamed orphan isolation, safe-path error propagation, and stale detection for profile, analysis, policy and source changes. All tests use synthetic temporary workspaces; no private career data or external provider was used.

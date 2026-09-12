@@ -9,6 +9,9 @@ import { parseEvidenceDraft, type EvidenceDraft } from "../profile/evidence.js";
 import { parseProfileRevision } from "../profile/versions.js";
 import { contentHash, ConflictError, readArtifact } from "../workspace/artifacts.js";
 import { workspacePrivacyWarnings } from "../workspace/privacy.js";
+import { assessmentFreshness, readCurrentMatch, readMatchHistory } from "../match/storage.js";
+import { readMatchContext } from "../match/context.js";
+import { parseMatchAssessment } from "../match/schema.js";
 import {
   createPastedJob,
   listWorkspaceJobs,
@@ -144,6 +147,56 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       setVersion(response, contentHash(`${content}\n`));
       return sendJson(response, 200, { content });
     }
+
+    const matchContextMatch = path.match(/^\/api\/jobs\/([^/]+)\/match-context$/);
+    if (method === "GET" && matchContextMatch) {
+      const jobId = decodePathSegment(matchContextMatch[1]!);
+      await requireMatchJob(root, jobId);
+      const profileRevision = requestedProfileRevision(url);
+      const context = await readMatchContext(root, jobId, profileRevision);
+      if (context.status === "blocked") {
+        const repair = context.remediation.some((item) => item.code === "capture-or-analysis-needs-repair" || item.code === "profile-evidence-needs-repair");
+        return sendJson(response, repair ? 409 : 200, context);
+      }
+      return sendJson(response, 200, context);
+    }
+
+    const assessmentsMatch = path.match(/^\/api\/jobs\/([^/]+)\/assessments$/);
+    if (method === "GET" && assessmentsMatch) {
+      const jobId = decodePathSegment(assessmentsMatch[1]!);
+      await requireMatchJob(root, jobId);
+      const current = await readCurrentMatchOrRepair(root, jobId);
+      const history = await readMatchHistoryOrRepair(root, jobId);
+      setVersion(response, current?.pointerHash ?? null);
+      return sendJson(response, 200, history);
+    }
+
+    const currentAssessmentMatch = path.match(/^\/api\/jobs\/([^/]+)\/assessments\/current$/);
+    if (method === "GET" && currentAssessmentMatch) {
+      const jobId = decodePathSegment(currentAssessmentMatch[1]!);
+      await requireMatchJob(root, jobId);
+      const current = await readCurrentMatchOrRepair(root, jobId);
+      if (current === undefined) return sendJson(response, 404, { error: "Not found" });
+      setVersion(response, current.pointerHash);
+      return sendJson(response, 200, { assessment: current.assessment, freshness: await assessmentFreshness(root, current.assessment) });
+    }
+
+    const assessmentDetailMatch = path.match(/^\/api\/jobs\/([^/]+)\/assessments\/([^/]+)$/);
+    if (method === "GET" && assessmentDetailMatch) {
+      const jobId = decodePathSegment(assessmentDetailMatch[1]!);
+      const assessmentId = decodePathSegment(assessmentDetailMatch[2]!);
+      await requireMatchJob(root, jobId);
+      await readCurrentMatchOrRepair(root, jobId);
+      const history = await readMatchHistoryOrRepair(root, jobId);
+      if (!history.assessments.some((entry) => entry.id === assessmentId)) return sendJson(response, 404, { error: "Not found" });
+      const artifact = await readArtifact(matchAssessmentPath(root, jobId, assessmentId));
+      if (artifact === undefined) return sendJson(response, 404, { error: "Not found" });
+      const assessment = parseMatchAssessment(JSON.parse(artifact.content) as unknown);
+      if (assessment.id !== assessmentId || assessment.jobRef.jobId !== jobId) return sendJson(response, 404, { error: "Not found" });
+      setVersion(response, artifact.hash);
+      return sendJson(response, 200, { assessment, freshness: await assessmentFreshness(root, assessment) });
+    }
+
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
     if (method === "GET" && jobMatch) return sendJson(response, 200, await readWorkspaceJob(root, decodeURIComponent(jobMatch[1]!)));
 
@@ -239,6 +292,8 @@ function sendError(response: ServerResponse, error: unknown): void {
     return;
   }
   if (error instanceof LocalRequestError) return sendJson(response, 403, { error: "Only local workspace requests are allowed." });
+  if (error instanceof MatchMissingError) return sendJson(response, 404, { error: "Not found" });
+  if (error instanceof MatchRepairError) return sendJson(response, 409, { error: "Assessment data needs repair before it can be read." });
   if (error instanceof CorruptionError) return sendJson(response, 500, { error: "Unable to read the local profile data. Check or recover the stored artifacts." });
   if (error instanceof PreconditionError) return sendJson(response, 428, { error: "Read the current artifact before saving (If-Match required)." });
   if (error instanceof ConflictError) return sendJson(response, 409, { error: "Artifact changed or is busy. Reload and reconcile your draft before saving." });
@@ -281,6 +336,8 @@ function isMissingJobError(error: unknown): boolean {
 class InputError extends Error {}
 class LocalRequestError extends Error {}
 class PreconditionError extends Error {}
+class MatchMissingError extends Error {}
+class MatchRepairError extends Error {}
 class CorruptionError extends Error {
   constructor(cause: unknown) {
     super("Stored profile data is corrupt", { cause });
@@ -298,6 +355,56 @@ function expectedVersion(request: IncomingMessage): string | null {
 function setVersion(response: ServerResponse, hash: string | null): void {
   response.setHeader("etag", `"${hash ?? "missing"}"`);
   response.setHeader("cache-control", "no-store");
+}
+
+function decodePathSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new InputError("The supplied local data is invalid.");
+  }
+}
+
+function requestedProfileRevision(url: URL): string | undefined {
+  const values = url.searchParams.getAll("profileRevision");
+  if (values.length === 0) return undefined;
+  if (values.length !== 1 || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(values[0]!) || values[0]!.includes("..")) {
+    throw new InputError("The supplied local data is invalid.");
+  }
+  return values[0];
+}
+
+async function requireMatchJob(root: string, jobId: string): Promise<void> {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(jobId)) throw new MatchMissingError();
+  try {
+    if (await readArtifact(join(resolve(root), "data", "jobs", jobId, "raw.json"))) return;
+  } catch (error) {
+    throw new MatchRepairError(error instanceof Error ? error.message : "match job cannot be read");
+  }
+  throw new MatchMissingError();
+}
+
+async function readCurrentMatchOrRepair(root: string, jobId: string) {
+  try {
+    return await readCurrentMatch(root, jobId);
+  } catch (error) {
+    throw new MatchRepairError(error instanceof Error ? error.message : "assessment current pointer is invalid");
+  }
+}
+
+async function readMatchHistoryOrRepair(root: string, jobId: string) {
+  try {
+    return await readMatchHistory(root, jobId);
+  } catch (error) {
+    throw new MatchRepairError(error instanceof Error ? error.message : "assessment history is invalid");
+  }
+}
+
+function matchAssessmentPath(root: string, jobId: string, assessmentId: string): string {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(jobId) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(assessmentId) || assessmentId === "current") {
+    throw new MatchMissingError();
+  }
+  return join(resolve(root), "data", "jobs", jobId, "assessments", `${assessmentId}.json`);
 }
 
 async function profileSnapshot(root: string) {

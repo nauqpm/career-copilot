@@ -11,6 +11,9 @@ import { parseCandidateProfile } from "./profile/schema.js";
 import { publishProfileRevision } from "./profile/storage.js";
 import { parseJobDecision } from "./decision/schema.js";
 import { readAnalysisContext, publishAnalysisRevision } from "./job/analysis-storage.js";
+import { readMatchContext } from "./match/context.js";
+import { parseMatchAssessment } from "./match/schema.js";
+import { saveMatchAssessment } from "./match/storage.js";
 import { writeArtifact } from "./workspace/artifacts.js";
 import { artifactPrivacyWarnings } from "./workspace/privacy.js";
 import { createLocalJob } from "./workspace/storage.js";
@@ -40,6 +43,9 @@ const usage = [
   "  career job validate-analysis <analysis.json> [--out path]",
   "  career job analysis-context <job-id> --root <workspace>",
   "  career job publish-analysis <job-id> <analysis.json> --root <workspace> --expected-hash <token>",
+  "  career match context <job-id> --root <workspace> [--profile-revision <id>]",
+  "  career match validate <assessment.json> (structure only; live references are checked by publish)",
+  "  career match publish <job-id> <assessment.json> --root <workspace> --expected-hash <token>",
   "  career profile validate <profile.json> [--out path]",
   "  career profile publish <profile.json> --root <workspace> --confirm --expected-hash sha256:<current-hash>",
   "  career decision validate <decision.json> [--out path]",
@@ -69,6 +75,11 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
       if (command === "validate-analysis") return await validateAnalysis(input, options, io);
       if (command === "analysis-context") return await analysisContext(input, options, io);
       if (command === "publish-analysis") return await publishAnalysis(input, options, io);
+    }
+    if (group === "match") {
+      if (command === "context") return await matchContext(input, options, io);
+      if (command === "validate") return await validateMatch(input, io);
+      if (command === "publish") return await publishMatch(input, options, io);
     }
     if (group === "profile" && command === "validate") return await validateProfile(input, options, io);
     if (group === "profile" && command === "publish") return await publishProfile(input, options, io);
@@ -143,6 +154,39 @@ async function publishAnalysis(jobId: string | undefined, options: string[], io:
   const draft = JSON.parse(await readFile(resolve(path), "utf8")) as unknown;
   const result = await publishAnalysisRevision(resolve(root), jobId, draft, expectedOption === "missing" ? null : expectedOption);
   io.writeStdout(serializeJson({ revisionId: result.revision.id, revisionHash: result.revisionHash }));
+  return 0;
+}
+
+async function matchContext(jobId: string | undefined, options: string[], io: CliIo): Promise<number> {
+  if (!jobId) throw new Error("Job ID is required");
+  const root = optionValue(options, "--root");
+  if (!root) throw new Error("--root is required to read match context");
+  const profileRevision = optionValue(options, "--profile-revision");
+  io.writeStdout(serializeJson(await readMatchContext(resolve(root), jobId, profileRevision)));
+  return 0;
+}
+
+async function validateMatch(path: string | undefined, io: CliIo): Promise<number> {
+  if (!path) throw new Error("Assessment JSON path is required");
+  const parsed = parseMatchAssessment(JSON.parse(await readFile(resolve(path), "utf8")) as unknown);
+  io.writeStdout(serializeJson(parsed));
+  io.writeStderr("Validated assessment structure only; live references are checked by publish.\n");
+  return 0;
+}
+
+async function publishMatch(jobId: string | undefined, options: string[], io: CliIo): Promise<number> {
+  if (!jobId) throw new Error("Job ID is required");
+  const path = options[0];
+  if (!path || path.startsWith("--")) throw new Error("Assessment JSON path is required");
+  const root = optionValue(options, "--root");
+  if (!root) throw new Error("--root is required to publish an assessment");
+  const expectedOption = optionValue(options, "--expected-hash");
+  if (expectedOption === undefined || (expectedOption !== "missing" && !/^sha256:[a-f0-9]{64}$/.test(expectedOption))) {
+    throw new Error("--expected-hash missing or sha256:<64 lowercase hex digits> is required to publish an assessment");
+  }
+  const draft = JSON.parse(await readFile(resolve(path), "utf8")) as unknown;
+  const result = await saveMatchAssessment(resolve(root), jobId, draft, expectedOption === "missing" ? null : expectedOption);
+  io.writeStdout(serializeJson({ assessmentId: result.assessment.id, assessmentHash: result.assessmentHash, pointerHash: result.pointerHash }));
   return 0;
 }
 

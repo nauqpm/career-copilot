@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { assertSafePath, readArtifact, writeArtifact } from "./artifacts.js";
 import { captureRawSource, createJobCapture, maxCaptureBytes, parseJobCapture, serializeJobCapture, type JobCapture, type LocalJobInput } from "../job/capture.js";
 import { findExactDuplicateHints, type DuplicateCandidate, type DuplicateHint } from "../job/duplicates.js";
+import { assessmentFreshness, readCurrentMatch, readMatchHistory, type MatchHistory } from "../match/storage.js";
+import type { MatchAssessment } from "../match/schema.js";
 
 import { type JobDecision, parseJobDecision } from "../decision/schema.js";
 import { type RawJobContent } from "../job/input.js";
@@ -20,6 +22,16 @@ export interface WorkspaceArtifactStatus {
   decision: boolean;
   cvDraft: boolean;
 }
+
+export type WorkspaceMatchAssessmentSummary = {
+  status: "current" | "stale" | "needs-repair";
+  id?: string;
+  createdAt?: string;
+  assessmentHash?: string;
+  recommendation?: MatchAssessment["recommendation"];
+  confidence?: MatchAssessment["confidence"];
+  staleReasons?: string[];
+};
 
 export interface WorkspaceJobSummary {
   id: string;
@@ -41,6 +53,8 @@ export interface WorkspaceJobSummary {
   captureCreatedAt?: string;
   duplicateHints?: DuplicateHint[];
   duplicateScanIncomplete?: boolean;
+  matchAssessment?: WorkspaceMatchAssessmentSummary;
+  matchAssessmentHistory?: MatchHistory["assessments"];
 }
 
 export type WorkspaceJobDetail = WorkspaceJobSummary & {
@@ -110,10 +124,10 @@ export async function listWorkspaceJobs(root: string): Promise<WorkspaceJobSumma
 export async function readWorkspaceJob(root: string, id: string): Promise<WorkspaceJobDetail> {
   const directory = jobDirectory(root, id);
   const raw = parseRawJobContent(await readJson(join(directory, "raw.json")));
-  const [derived, artifactMetadata, captureState] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory), readCaptureState(directory, id, raw)]);
+  const [derived, artifactMetadata, captureState, matchState] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory), readCaptureState(directory, id, raw), readMatchState(root, id)]);
   const duplicateState = await readDuplicateState(root, id, raw, captureState);
   return {
-    ...summaryFrom({ id, raw, ...derived, ...artifactMetadata, ...captureState, ...duplicateState }),
+    ...summaryFrom({ id, raw, ...derived, ...artifactMetadata, ...captureState, ...duplicateState, ...matchState }),
     raw,
     ...(captureState.capture === undefined ? {} : { capture: captureState.capture }),
     ...derived,
@@ -147,8 +161,50 @@ export async function saveWorkspaceJobNote(root: string, jobId: string, content:
 async function readWorkspaceSummary(root: string, id: string): Promise<WorkspaceJobSummary> {
   const directory = jobDirectory(root, id);
   const raw = parseRawJobContent(await readJson(join(directory, "raw.json")));
-  const [derived, artifactMetadata, captureState] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory), readCaptureState(directory, id, raw)]);
-  return summaryFrom({ id, raw, ...derived, ...artifactMetadata, ...captureState });
+  const [derived, artifactMetadata, captureState, matchState] = await Promise.all([readDerivedData(directory), readWorkspaceArtifactMetadata(directory), readCaptureState(directory, id, raw), readMatchState(root, id)]);
+  return summaryFrom({ id, raw, ...derived, ...artifactMetadata, ...captureState, ...matchState });
+}
+
+async function readMatchState(root: string, jobId: string): Promise<{
+  matchAssessment?: WorkspaceMatchAssessmentSummary;
+  matchAssessmentHistory?: MatchHistory["assessments"];
+}> {
+  let history: MatchHistory;
+  try {
+    history = await readMatchHistory(root, jobId);
+  } catch {
+    return { matchAssessment: { status: "needs-repair" } };
+  }
+  let pointerArtifact;
+  try {
+    pointerArtifact = await readArtifact(join(resolve(root), "data", "jobs", jobId, "assessments", "current.json"));
+  } catch {
+    return { matchAssessment: { status: "needs-repair" }, matchAssessmentHistory: history.assessments };
+  }
+  if (history.assessments.length === 0 && history.current === undefined && pointerArtifact === undefined) return {};
+
+  if (pointerArtifact !== undefined) {
+    try {
+      const current = await readCurrentMatch(root, jobId);
+      if (current === undefined) return { matchAssessmentHistory: history.assessments };
+      const freshness = await assessmentFreshness(root, current.assessment);
+      return {
+        matchAssessment: {
+          status: freshness.stale ? "stale" : "current",
+          id: current.assessment.id,
+          createdAt: current.assessment.createdAt,
+          assessmentHash: current.assessmentHash,
+          recommendation: current.assessment.recommendation,
+          confidence: current.assessment.confidence,
+          ...(freshness.reasons.length === 0 ? {} : { staleReasons: freshness.reasons }),
+        },
+        matchAssessmentHistory: history.assessments,
+      };
+    } catch {
+      return { matchAssessment: { status: "needs-repair" }, matchAssessmentHistory: history.assessments };
+    }
+  }
+  return { matchAssessmentHistory: history.assessments };
 }
 
 async function readDerivedData(directory: string): Promise<{
@@ -192,6 +248,8 @@ function summaryFrom(input: {
   invalidSourceData?: string;
   duplicateHints?: DuplicateHint[];
   duplicateScanIncomplete?: boolean;
+  matchAssessment?: WorkspaceMatchAssessmentSummary;
+  matchAssessmentHistory?: MatchHistory["assessments"];
 }): WorkspaceJobSummary {
   return {
     id: input.id,
@@ -217,6 +275,8 @@ function summaryFrom(input: {
     ...(input.invalidSourceData === undefined ? {} : { invalidSourceData: input.invalidSourceData }),
     ...(input.duplicateHints === undefined ? {} : { duplicateHints: input.duplicateHints }),
     ...(input.duplicateScanIncomplete === undefined ? {} : { duplicateScanIncomplete: input.duplicateScanIncomplete }),
+    ...(input.matchAssessment === undefined ? {} : { matchAssessment: input.matchAssessment }),
+    ...(input.matchAssessmentHistory === undefined ? {} : { matchAssessmentHistory: input.matchAssessmentHistory }),
   };
 }
 

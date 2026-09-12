@@ -156,6 +156,7 @@ pnpm exec tsx --test tests/job-analysis-storage.test.ts tests/job-capture.test.t
 pnpm test
 npm run build
 git diff --check
+pnpm audit --audit-level=high
 ```
 
 - Hardened Task 2 tests: **11 passed, 0 failed, 0 skipped**.
@@ -288,3 +289,37 @@ git diff --check
 - Complete repository test tree: **257 passed, 0 failed, 0 skipped**.
 - TypeScript build: **passed**.
 - Whitespace check: **passed**.
+
+## Task 5 — local assessment workflow (2026-09-12)
+
+Task 5 adds local-only assessment handoff commands and read-only HTTP reads. `career match context` returns the exact selected analysis/profile context and hashes, `career match validate` performs structural validation without writing, and `career match publish` rechecks live capture, analysis, profile and evidence bindings before using the existing immutable assessment/pointer storage. The server exposes blocked preflight context, assessment history, current assessment freshness and historical detail with quoted pointer/artifact ETags. Ordinary unpublished preflight blocks remain readable; corrupt captures, pointers, or assessment history return repair responses. Job summaries add assessment status/history without changing legacy analysis, decision, or opportunity fields. No provider, browser authoring endpoint, score, CV, submission or remote storage path was added.
+
+### RED evidence
+
+Commands:
+
+```powershell
+pnpm exec tsx --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
+.\node_modules\.bin\tsx.CMD --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
+```
+
+The package wrapper could not resolve the local `tsx` executable and the sandboxed local-bin invocation hit the known Node `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` startup boundary. The equivalent local-bin run with authorized Windows path resolution then failed as intended before the Task 5 implementation: **25 tests ran, 19 passed, 6 failed**, with the six new CLI/API expectations returning the pre-existing command/route failures.
+
+### GREEN and compatibility evidence
+
+Commands:
+
+```powershell
+.\node_modules\.bin\tsx.CMD --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
+$testFiles = @(rg --files tests -g '*.test.ts'); & '.\node_modules\.bin\tsx.CMD' --test $testFiles
+npm run build
+git diff --check
+```
+
+- Focused Task 5 CLI/API/workspace suite: **27 passed, 0 failed, 0 skipped**.
+- Complete test tree, including all existing CLI, workspace, profile, opportunity and prior matching tests: **265 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- `git diff --check`: **passed**.
+- `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
+
+Coverage includes ready and blocked context, exact profile-revision selection, structural validation without writes, optimistic publish conflict with unchanged current pointer, URL-decoded safe IDs, malformed profile-revision query rejection, quoted ETags for pointer/artifact reads, freshness output, absent assessment 404s, repair 409s, non-leaking generic errors, and additive workspace assessment status/history. Synthetic temporary workspaces only; no private career data or provider invocation was used. Existing legacy artifact bodies, M3 grouping fields and source bytes remain unchanged.

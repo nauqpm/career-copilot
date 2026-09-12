@@ -9,13 +9,13 @@ const arrangementLabels = { onsite: "Tại nơi làm việc", hybrid: "Kết h�
 const employmentLabels = { "full-time": "Toàn thời gian", "part-time": "Bán thời gian", contract: "Hợp đồng", internship: "Thực tập", temporary: "Thời vụ" };
 const artifactLabels = [["source", "Nguồn JD"], ["analysis", "Phân tích"], ["decision", "Quyết định"], ["cvDraft", "Bản nháp CV"]];
 
-export function renderApplication({ route = { page: "overview" }, summary = {}, detail, opportunity, opportunityDraft, opportunityConfirmationKey, profile = summary.profile, profileEditor, note, jobDraft, error, notice, menuOpen = true, loading = false } = {}) {
+export function renderApplication({ route = { page: "overview" }, summary = {}, detail, opportunity, opportunityDraft, opportunityConfirmationKey, assessmentState, profile = summary.profile, profileEditor, note, jobDraft, error, notice, menuOpen = true, loading = false } = {}) {
   return `${renderSidebar(route, menuOpen)}<main id="workspace" class="workspace-main" aria-busy="${loading}">
     ${(summary.privacyWarnings ?? []).map((warning) => `<p class="warning" role="alert">${escapeHtml(warning)}</p>`).join("")}
     ${summary.profileSourceError ? `<p class="warning" role="alert">${escapeHtml(summary.profileSourceError)}</p>` : ""}
     ${summary.profileError ? `<p class="warning" role="alert">Hồ sơ cần được khôi phục trước khi chỉnh sửa: ${escapeHtml(summary.profileError)}</p>` : ""}
     <p id="notice" class="notice${error ? " error" : ""}" aria-atomic="true" role="${error ? "alert" : "status"}" aria-live="polite">${escapeHtml(error || notice || "")}${error && route.page === "profile" && profileEditor && !error.includes("Nội dung đang nhập được giữ nguyên") ? " Nội dung đang nhập được giữ nguyên; hãy kiểm tra rồi lưu lại." : ""}</p>
-    ${loading && route.page === "job" ? pageHeader("Đang tải JD…", "Đọc nguồn và tài liệu trên máy của bạn.") : renderPage({ route, summary, detail, opportunity, opportunityDraft, opportunityConfirmationKey, profile, profileEditor, note, jobDraft })}
+    ${loading && route.page === "job" ? pageHeader("Đang tải JD…", "Đọc nguồn và tài liệu trên máy của bạn.") : renderPage({ route, summary, detail, opportunity, opportunityDraft, opportunityConfirmationKey, assessmentState, profile, profileEditor, note, jobDraft })}
   </main>`;
 }
 
@@ -30,10 +30,10 @@ export function renderSidebar(route = { page: "overview" }, menuOpen = true) {
   </aside>`;
 }
 
-export function renderPage({ route = { page: "overview" }, summary = {}, detail, opportunity, opportunityDraft, opportunityConfirmationKey, profile = summary.profile, profileEditor, note, jobDraft } = {}) {
+export function renderPage({ route = { page: "overview" }, summary = {}, detail, opportunity, opportunityDraft, opportunityConfirmationKey, assessmentState, profile = summary.profile, profileEditor, note, jobDraft } = {}) {
   switch (route.page) {
     case "jobs": return renderJobs(summary);
-    case "job": return renderJobDetail(detail, note, opportunity, opportunityDraft, opportunityConfirmationKey);
+    case "job": return renderJobDetail(detail, note, opportunity, opportunityDraft, opportunityConfirmationKey, assessmentState);
     case "profile": return summary.profileError && !profileEditor ? pageHeader("Hồ sơ cá nhân", "Hồ sơ đang lỗi. Hãy khôi phục dữ liệu rồi tải lại.") : renderProfile(profile, profileEditor, summary);
     case "cvs": return renderCvLibrary(summary);
     case "new-job": return renderNewJob(jobDraft);
@@ -61,10 +61,14 @@ export function renderJobs(summary = {}) {
   return `${pageHeader("Job descriptions", "Nguồn JD và các tài liệu đã có cho từng vị trí.")}<section class="card jobs-library" aria-label="Danh sách JD">${jobs.length ? renderJobList(jobs) : emptyJobs()}</section>`;
 }
 
-export function renderJobDetail(detail, note = "", opportunity, opportunityDraft = {}, opportunityConfirmationKey) {
+export function renderJobDetail(detail, note = "", opportunity, opportunityDraft = {}, opportunityConfirmationKey, assessmentState) {
   if (!detail) return `${pageHeader("Không tìm thấy JD", "JD chưa có trong thư mục cục bộ hoặc chưa tải được.")}<a href="#jobs">Trở về danh sách JD</a>`;
   const analysis = detail.analysis;
   const decision = detail.decision;
+  const assessment = assessmentState?.assessment;
+  const hasCurrentAssessment = Boolean(assessment) && ["current", "stale"].includes(assessmentState?.status ?? "current")
+    || ["current", "stale"].includes(assessmentState?.status)
+    || ["current", "stale"].includes(detail.matchAssessment?.status);
   const title = analysis?.title ?? detail.title ?? "JD chưa có tiêu đề";
   const company = analysis?.company ?? detail.company ?? "Chưa có tên đơn vị";
   return `${pageHeader(title, company)}
@@ -75,9 +79,11 @@ export function renderJobDetail(detail, note = "", opportunity, opportunityDraft
         ${renderDuplicateHints(detail)}
         ${renderOpportunityReview(detail, opportunity, opportunityDraft, opportunityConfirmationKey)}
         ${detail.invalidDerivedData ? `<p class="warning" role="alert">Tài liệu dẫn xuất cần được kiểm tra: ${escapeHtml(detail.invalidDerivedData)}. Hãy yêu cầu Codex kiểm tra tệp liên quan trước khi tải lại.</p>` : ""}
+        ${renderAssessmentState(detail, assessmentState)}
+        ${renderAssessmentHistory(detail)}
         ${analysis ? renderAnalysis(analysis) : `<section class="detail-section"><h2>Chưa có phân tích</h2><p>Chưa có phân tích hợp lệ để hiển thị thông tin vị trí.</p>${renderWorkflow(detail, "analysis")}</section>`}
-        ${decision ? renderDecision(decision) : `<section class="detail-section"><h2>Chưa có quyết định</h2><p>${analysis ? "Dùng phân tích đã kiểm tra và hồ sơ cá nhân để đánh giá vị trí trong Codex." : "Hoàn thành và kiểm tra phân tích JD trước khi đánh giá cùng hồ sơ cá nhân."}</p>${analysis ? renderWorkflow(detail, "decision") : ""}</section>`}
-        <section class="detail-section"><div class="section-heading"><h2>Bản nháp CV</h2>${detail.cvDraft ? downloadLink(detail.id) : ""}</div>${detail.cvDraft ? `<p>${decision?.cvDraftRecommendation === "hold" ? "Đang giữ theo quyết định hiện tại." : "Bản nháp riêng cho vị trí này; không thay thế hồ sơ gốc."}</p><pre class="draft-preview">${escapeHtml(detail.cvDraft)}</pre>` : '<p class="empty-state">Chưa có bản nháp CV. Chỉ tạo bản nháp trong Codex khi quyết định đã được kiểm tra và cho phép tạo.</p>'}</section>
+        ${decision ? renderDecision(decision, !hasCurrentAssessment) : `<section class="detail-section"><h2>Chưa có quyết định</h2><p>${analysis ? "Dùng phân tích đã kiểm tra và hồ sơ cá nhân để đánh giá vị trí trong Codex." : "Hoàn thành và kiểm tra phân tích JD trước khi đánh giá cùng hồ sơ cá nhân."}</p>${analysis ? renderWorkflow(detail, "decision") : ""}</section>`}
+        <section class="detail-section"><div class="section-heading"><h2>Bản nháp CV</h2>${detail.cvDraft ? downloadLink(detail.id) : ""}</div>${detail.cvDraft ? `<p>${!hasCurrentAssessment && decision?.cvDraftRecommendation === "hold" ? "Đang giữ theo quyết định hiện tại." : "Bản nháp riêng cho vị trí này; không thay thế hồ sơ gốc."}</p><pre class="draft-preview">${escapeHtml(detail.cvDraft)}</pre>` : '<p class="empty-state">Chưa có bản nháp CV. Chỉ tạo bản nháp trong Codex khi quyết định đã được kiểm tra và cho phép tạo.</p>'}</section>
         <details class="source-jd"><summary>Nội dung JD gốc</summary><p class="source-reference">Nguồn: ${escapeHtml(detail.raw?.source?.value ?? "Chưa có nguồn tham chiếu")}</p><pre>${escapeHtml(detail.raw?.content ?? "")}</pre></details>
       </article>
       <aside class="detail-sidebar" aria-label="Tài liệu và ghi chú JD"><section class="card"><h2>Tài liệu của JD</h2>${renderArtifacts(detail)}</section>${renderNoteForm(note)}</aside>
@@ -240,9 +246,165 @@ function renderRequirements(requirements = []) {
   return `<section class="subsection"><h3>Yêu cầu</h3><ul>${requirements.map((item) => `<li><p>${escapeHtml(item.statement)}${Object.hasOwn(priorities, item.priority) ? ` <span class="priority">${priorities[item.priority]}</span>` : ""}</p><dl>${optionalDefinitions([["Kinh nghiệm", item.minimumYears === undefined ? undefined : `${item.minimumYears} năm trở lên`], ["Trình độ", item.degree], ["Ngôn ngữ", item.languageLevel]])}</dl></li>`).join("")}</ul></section>`;
 }
 
-function renderDecision(decision) {
+const recommendationLabels = { consider: "Có thể cân nhắc", clarify: "Cần làm rõ", "not-ready": "Chưa sẵn sàng" };
+const assessmentStatusLabels = { current: "Hiện tại", stale: "Cũ — cần chạy lại", "needs-repair": "Cần khôi phục" };
+const assessmentModalityLabels = { required: "Bắt buộc", preferred: "Ưu tiên", unknown: "Chưa xác định" };
+const assessmentVerdictLabels = {
+  supported: "Được chứng minh",
+  "partially-supported": "Được đáp ứng một phần",
+  "not-evidenced": "Chưa có bằng chứng",
+  unknown: "Chưa rõ",
+  conflicting: "Mâu thuẫn",
+  "not-applicable": "Không áp dụng",
+};
+const preferenceVerdictLabels = { compatible: "Phù hợp", conflicting: "Mâu thuẫn", unknown: "Chưa rõ" };
+
+function renderAssessmentState(detail, assessmentState = {}) {
+  if (assessmentState?.assessment && assessmentState.status !== "needs-repair") return renderAssessment(detail, assessmentState);
+  const viewState = assessmentState?.status ? assessmentState : (detail?.matchAssessment ?? {});
+  const status = viewState.status;
+  if (status === "blocked") return renderAssessmentBlocked(detail, viewState);
+  if (status === "needs-repair") return renderAssessmentRepair(detail);
+  if (status === "stale") return renderAssessmentStaleSummary(detail, viewState);
+  return renderMissingAssessment(detail);
+}
+
+function renderAssessment(detail, assessmentState) {
+  const assessment = assessmentState.assessment;
+  const stale = assessmentState.status === "stale" || assessmentState.freshness?.status === "stale" || assessmentState.freshness?.stale === true;
+  const status = stale ? "stale" : "current";
+  const freshnessReasons = assessmentState.freshness?.reasons ?? assessmentState.staleReasons ?? [];
+  const captureDate = detail.capture?.createdAt ?? detail.captureCreatedAt;
+  const context = assessmentContextFor(assessment, assessmentState.context);
+  const contextAttempted = Object.hasOwn(assessmentState, "context");
+  const sourceRequirements = context?.job?.analysis?.requirements ?? (contextAttempted ? [] : detail.analysis?.requirements ?? []);
+  const renderState = context ? { ...assessmentState, context } : contextAttempted ? { ...assessmentState, context: null } : assessmentState;
+  return `<section class="detail-section assessment-section" aria-labelledby="assessment-heading" data-assessment-status="${status}">
+    <header class="assessment-snapshot"><div><p class="eyebrow">Đánh giá phiên bản</p><h2 id="assessment-heading">Đánh giá phiên bản</h2><p class="assessment-binding">Phân tích <code>${escapeHtml(assessment.jobRef?.analysisId ?? "Chưa rõ")}</code> · Hồ sơ <code>${escapeHtml(assessment.profileRef?.revisionId ?? "Chưa rõ")}</code></p></div><span class="decision-status status-${status}">${assessmentStatusLabels[status]}</span></header>
+    <dl class="assessment-meta">${definition("Ngày tạo đánh giá", assessment.createdAt ?? "Chưa rõ")}${definition("Ngày nhập JD", captureDate ?? "Chưa rõ")}${definition("Độ tin cậy", assessment.confidence ?? "Chưa rõ")}</dl>
+    <section class="assessment-recommendation"><h3>Khuyến nghị: ${escapeHtml(recommendationLabels[assessment.recommendation] ?? assessment.recommendation ?? "Chưa rõ")}</h3><p>${escapeHtml(assessment.summary)}</p>${stale ? `<p class="warning" role="status">Đánh giá này đã cũ; dữ liệu đầu vào đã thay đổi. ${freshnessReasons.length ? `Lý do: ${freshnessReasons.map((reason) => escapeHtml(reason)).join("; ")}.` : "Hãy chạy lại trên phiên bản đã chọn."}</p>` : ""}</section>
+    ${renderAssessmentRequirements(assessment, sourceRequirements, detail, renderState)}
+    ${renderPreferenceChecks(assessment.preferenceChecks, detail, renderState)}
+    ${renderAssessmentFindings(assessment.blockers, assessment.anomalies, assessment.questions, detail, renderState)}
+    ${renderAssessmentWorkflow(detail, assessment)}
+  </section>`;
+}
+
+function assessmentContextFor(assessment, context) {
+  if (!assessment || context?.status !== "ready") return undefined;
+  return context.job?.id === assessment.jobRef?.analysisId
+    && context.analysisHash === assessment.jobRef?.analysisHash
+    && context.profile?.id === assessment.profileRef?.revisionId
+    && context.profileRevisionHash === assessment.profileRef?.revisionHash
+    && sameEvidenceBindings(context.evidenceBindings, assessment.profileRef?.evidence)
+    ? context
+    : undefined;
+}
+
+function sameEvidenceBindings(left, right) {
+  return Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length
+    && left.every((entry, index) => entry?.id === right[index]?.id && entry?.hash === right[index]?.hash);
+}
+
+function renderAssessmentRequirements(assessment, sourceRequirements, detail, assessmentState) {
+  const requirements = assessment.requirementAssessments ?? [];
+  if (!requirements.length) return '<section class="subsection assessment-requirements"><h3>Yêu cầu được đối chiếu</h3><p class="empty-state">Đánh giá chưa có yêu cầu được đối chiếu.</p></section>';
+  const byId = new Map(sourceRequirements.map((requirement, index) => [requirement.id ?? `index-${index}`, requirement]));
+  const rows = requirements.map((entry, index) => {
+    const source = byId.get(entry.requirementId) ?? sourceRequirements[index];
+    const quote = source?.source?.quote ?? source?.statement ?? "Trích dẫn không khả dụng";
+    const evidence = renderEvidenceReferences(entry.evidenceIds, detail, assessmentState);
+    return `<tr><th scope="row"><span class="assessment-quote">${escapeHtml(quote)}</span><code>${escapeHtml(entry.requirementId)}</code></th><td><span class="assessment-modality">${escapeHtml(assessmentModalityLabels[entry.modality] ?? entry.modality)}</span></td><td><span class="assessment-verdict verdict-${escapeHtml(entry.verdict)}">${escapeHtml(assessmentVerdictLabels[entry.verdict] ?? entry.verdict)}</span></td><td><p>${escapeHtml(entry.explanation)}</p>${entry.question ? `<p class="assessment-question">Câu hỏi: ${escapeHtml(entry.question)}</p>` : ""}</td><td>${evidence}</td></tr>`;
+  }).join("");
+  return `<section class="subsection assessment-requirements"><h3>Yêu cầu được đối chiếu</h3><div class="assessment-table-wrap" tabindex="0" role="region" aria-label="Bảng bằng chứng yêu cầu; cuộn ngang để xem đầy đủ"><table class="assessment-table"><caption>Yêu cầu, kết quả và bằng chứng liên quan</caption><thead><tr><th scope="col">Trích nguyên văn</th><th scope="col">Mức độ</th><th scope="col">Kết quả</th><th scope="col">Giải thích</th><th scope="col">Bằng chứng</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+
+function renderPreferenceChecks(checks = [], detail, assessmentState) {
+  if (!checks.length) return "";
+  return `<section class="subsection assessment-preferences"><h3>Kiểm tra điều kiện ưu tiên</h3><div class="assessment-check-list">${checks.map((check) => `<article class="assessment-check"><header><strong>${escapeHtml(check.claimPath)}</strong><span class="assessment-verdict verdict-${escapeHtml(check.verdict)}">${escapeHtml(preferenceVerdictLabels[check.verdict] ?? check.verdict)}</span></header><dl>${definition("Sự thật từ JD", check.jobFact)}${definition("Ưu tiên hồ sơ", check.candidatePreference)}</dl><p>${escapeHtml(check.explanation)}</p><p>${renderEvidenceReferences(check.evidenceIds, detail, assessmentState)}</p></article>`).join("")}</div></section>`;
+}
+
+function renderAssessmentFindings(blockers = [], anomalies = [], questions = [], detail, assessmentState) {
+  const sections = [];
+  if (blockers.length) sections.push(`<section class="assessment-findings assessment-blockers"><h3>Trở ngại</h3><ul>${blockers.map((finding) => renderFinding(finding, detail, assessmentState)).join("")}</ul></section>`);
+  if (anomalies.length) sections.push(`<section class="assessment-findings assessment-anomalies"><h3>Cảnh báo dữ liệu</h3><ul>${anomalies.map((finding) => renderFinding(finding, detail, assessmentState)).join("")}</ul>`);
+  if (questions.length) sections.push(`<section class="assessment-findings assessment-questions"><h3>Câu hỏi cần làm rõ</h3><ul>${questions.map((question) => `<li><span class="question-owner">${escapeHtml(question.for === "candidate" ? "candidate" : "employer")}</span><p>${escapeHtml(question.text)}</p>${question.requirementId ? `<code>${escapeHtml(question.requirementId)}</code>` : ""}</li>`).join("")}</ul></section>`);
+  return sections.join("");
+}
+
+function renderFinding(finding, detail, assessmentState) {
+  return `<li><p><strong>${escapeHtml(finding.code)}</strong> — ${escapeHtml(finding.message)}</p>${finding.requirementId ? `<code>${escapeHtml(finding.requirementId)}</code>` : ""}<p>${renderEvidenceReferences(finding.evidenceIds, detail, assessmentState)}</p></li>`;
+}
+
+function renderEvidenceReferences(ids = [], detail, assessmentState) {
+  if (!ids.length) return '<span class="muted">Không có bằng chứng được chọn</span>';
+  const evidence = evidenceIndex(detail, assessmentState);
+  return `<span class="evidence-references">${ids.map((id) => {
+    const claimPath = evidence.get(id);
+    const claimLabel = claimPath ? ` <span class="claim-path">${escapeHtml(claimPath)}</span>` : " <span class=\"claim-path\">Đường dẫn claim không khả dụng</span>";
+    return `<code class="evidence-id">${escapeHtml(id)}</code>${claimLabel}`;
+  }).join(" · ")}</span>`;
+}
+
+function evidenceIndex(detail, assessmentState) {
+  const contextAttempted = Object.hasOwn(assessmentState ?? {}, "context");
+  const context = assessmentContextFor(assessmentState?.assessment, assessmentState?.context);
+  if (contextAttempted && !context) return new Map();
+  const entries = context?.profile?.claimEvidence ?? context?.evidence ?? assessmentState?.evidence ?? assessmentState?.assessment?.evidence ?? assessmentState?.assessment?.evidenceById ?? detail?.profileEvidence ?? detail?.matchEvidence ?? assessmentState?.profileEvidence ?? [];
+  const index = new Map();
+  if (Array.isArray(entries)) {
+    for (const entry of entries) {
+      if (entry?.id && entry?.claimPath) index.set(entry.id, entry.claimPath);
+      for (const id of entry?.evidenceIds ?? []) if (entry?.claimPath) index.set(id, entry.claimPath);
+    }
+  } else if (entries && typeof entries === "object") {
+    for (const [id, value] of Object.entries(entries)) index.set(id, typeof value === "string" ? value : value?.claimPath);
+  }
+  return index;
+}
+
+function renderAssessmentBlocked(detail, assessmentState) {
+  const remediation = assessmentState.remediation ?? [];
+  return `<section class="detail-section assessment-section assessment-blocked" data-assessment-status="blocked"><header class="assessment-snapshot"><div><p class="eyebrow">Đánh giá phiên bản</p><h2>Đánh giá cần chuẩn bị dữ liệu</h2></div><span class="decision-status status-pending">blocked</span></header><p class="warning" role="alert">Chưa thể đọc đánh giá phiên bản vì dữ liệu đầu vào chưa sẵn sàng.</p>${remediation.length ? `<ul class="assessment-remediation">${remediation.map((item) => `<li><code>${escapeHtml(item.code)}</code><p>${escapeHtml(item.message)}</p></li>`).join("")}</ul>` : ""}${renderAssessmentWorkflow(detail)}</section>`;
+}
+
+function renderAssessmentRepair(detail) {
+  return `<section class="detail-section assessment-section assessment-repair" data-assessment-status="needs-repair"><header class="assessment-snapshot"><div><p class="eyebrow">Đánh giá phiên bản</p><h2>Đánh giá cần khôi phục</h2></div><span class="decision-status status-needs-repair">${assessmentStatusLabels["needs-repair"]}</span></header><p class="warning" role="alert">Không thể đọc đánh giá phiên bản. Hãy khôi phục các tệp dữ liệu cục bộ rồi tải lại; chi tiết lỗi không được hiển thị trên trang này.</p>${renderAssessmentWorkflow(detail)}</section>`;
+}
+
+function renderAssessmentStaleSummary(detail, assessmentState) {
+  const reasons = assessmentState.freshness?.reasons ?? assessmentState.staleReasons ?? [];
+  return `<section class="detail-section assessment-section" data-assessment-status="stale"><header class="assessment-snapshot"><div><p class="eyebrow">Đánh giá phiên bản</p><h2>Đánh giá cũ</h2></div><span class="decision-status status-stale">${assessmentStatusLabels.stale}</span></header>${reasons.length ? `<ul class="assessment-stale-reasons">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : ""}${renderAssessmentWorkflow(detail)}</section>`;
+}
+
+function renderMissingAssessment(detail) {
+  return `<section class="detail-section assessment-section assessment-missing" data-assessment-status="missing"><header class="assessment-snapshot"><div><p class="eyebrow">Đánh giá phiên bản</p><h2>Chưa có đánh giá phiên bản</h2></div><span class="decision-status status-pending">Chưa có</span></header><p>Chưa có assessment M4 hiện tại cho JD này. Nguồn JD và các tài liệu cũ vẫn được giữ nguyên.</p>${renderAssessmentWorkflow(detail)}</section>`;
+}
+
+function renderAssessmentWorkflow(detail, assessment) {
+  const id = escapeHtml(detail?.id ?? "<job-id>");
+  const profileRevision = assessment?.profileRef?.revisionId;
+  const profileArgument = profileRevision ? ` --profile-revision ${escapeHtml(profileRevision)}` : "";
+  return `<details class="workflow-reminder assessment-rerun"><summary>Chạy lại đánh giá</summary><p>Đây chỉ là hướng dẫn cục bộ; trang này không tự chạy model và không gửi dữ liệu ra ngoài.</p><p>Trong Codex, đọc <code>skills/assess-job/SKILL.md</code>, lấy context của <code>${id}</code> rồi kiểm tra và lưu bản assessment đã liên kết. Có thể kiểm tra bằng <code>career match context ${id}${profileArgument}</code> và <code>career match validate &lt;assessment.json&gt;</code>.</p><p>Quay lại đây và chọn “Tải lại dữ liệu” để xem kết quả.</p></details>`;
+}
+
+function renderAssessmentHistory(detail) {
+  const history = detail?.matchAssessmentHistory ?? [];
+  if (!history.length) return "";
+  const rows = history.map((entry) => {
+    const status = entry.status ?? (entry.active ? "current" : "stale");
+    const statusLabel = assessmentStatusLabels[status] ?? status;
+    const recommendation = recommendationLabels[entry.recommendation] ?? entry.recommendation ?? "Chưa rõ";
+    const href = `/api/jobs/${encodeURIComponent(detail.id)}/assessments/${encodeURIComponent(entry.id)}`;
+    return `<li class="assessment-history-item"><a href="${href}"><strong>${escapeHtml(entry.id)}</strong></a><span>${escapeHtml(entry.createdAt)}</span><span>${escapeHtml(recommendation)}</span><span class="decision-status status-${escapeHtml(status)}">${escapeHtml(statusLabel)}${entry.active ? " · đang dùng" : ""}</span></li>`;
+  }).join("");
+  return `<section class="detail-section assessment-history" aria-labelledby="assessment-history-heading"><div class="section-heading"><h2 id="assessment-history-heading">Lịch sử đánh giá</h2><span class="muted">Chỉ đọc trên máy</span></div><ul>${rows}</ul></section>`;
+}
+
+function renderDecision(decision, legacy = false) {
   const cvRecommendation = decision.cvDraftRecommendation === "create" ? "có thể tạo theo quyết định này" : decision.cvDraftRecommendation === "hold" ? "đang giữ" : "chưa có khuyến nghị hợp lệ";
-  return `<section class="detail-section decision-section"><h2>Bằng chứng cho quyết định</h2><p>${escapeHtml(decision.summary)}</p>${renderEvidenceList("Điểm đáp ứng", decision.matches)}${renderEvidenceList("Khoảng trống", decision.gaps)}${renderEvidenceList("Trở ngại", decision.blockers)}${renderTextList("Câu hỏi cần làm rõ", decision.questions)}<p class="recommendation">Bản nháp CV: ${cvRecommendation}.</p></section>`;
+  return `<section class="detail-section decision-section"><h2>${legacy ? "Đánh giá cũ — chưa khóa phiên bản" : "Bằng chứng cho quyết định"}</h2>${legacy ? '<p class="legacy-decision-note">Bằng chứng cho quyết định cũ; chưa khóa phiên bản nguồn và hồ sơ.</p>' : ""}<p>${escapeHtml(decision.summary)}</p>${renderEvidenceList("Điểm đáp ứng", decision.matches)}${renderEvidenceList("Khoảng trống", decision.gaps)}${renderEvidenceList("Trở ngại", decision.blockers)}${renderTextList("Câu hỏi cần làm rõ", decision.questions)}<p class="recommendation">Bản nháp CV: ${cvRecommendation}.</p></section>`;
 }
 
 function renderEvidenceList(title, items) {

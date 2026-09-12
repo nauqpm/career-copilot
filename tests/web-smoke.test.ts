@@ -104,7 +104,40 @@ test("browser controller loads the initial job hash with its source and note", a
   assert.match(browser.html(), /<h1[^>]*>Backend Developer<\/h1>/);
   assert.match(browser.html(), /Build reliable APIs\./);
   assert.match(browser.html(), />Initial local note<\/textarea>/);
-  assert.deepEqual(browser.requests.map((request) => request.path), ["/api/summary", "/api/jobs/job-example", "/api/jobs/job-example/note", "/api/opportunities"]);
+  assert.deepEqual(browser.requests.map((request) => request.path), ["/api/summary", "/api/jobs/job-example", "/api/jobs/job-example/note", "/api/opportunities", "/api/jobs/job-example/assessments/current", "/api/jobs/job-example/match-context"]);
+});
+
+test("a late assessment response from a previous route cannot replace the current job detail", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  browser.setJobDetails({ "job-other": { ...populatedFixture(), id: "job-other", title: "Other role", sourcePreview: "Other role", analysis: { ...populatedFixture().analysis, title: "Other role" } } });
+  browser.setAssessment("job-example", { assessment: { id: "assessment-a", recommendation: "consider", confidence: "high", summary: "Assessment A", createdAt: "2026-09-12T07:00:00.000Z", jobRef: { analysisId: "analysis-a" }, profileRef: { revisionId: "profile-a" }, requirementAssessments: [], preferenceChecks: [], blockers: [], anomalies: [], questions: [] }, freshness: { stale: false, reasons: [] } });
+  browser.setAssessment("job-other", { assessment: { id: "assessment-b", recommendation: "clarify", confidence: "medium", summary: "Assessment B", createdAt: "2026-09-12T08:00:00.000Z", jobRef: { analysisId: "analysis-b" }, profileRef: { revisionId: "profile-b" }, requirementAssessments: [], preferenceChecks: [], blockers: [], anomalies: [], questions: [] }, freshness: { stale: false, reasons: [] } });
+  let releaseAssessment!: () => void;
+  const assessmentGate = new Promise<void>((resolve) => { releaseAssessment = resolve; });
+  browser.beforeRequest((path) => path === "/api/jobs/job-example/assessments/current" ? assessmentGate : Promise.resolve());
+  const firstLoad = initializeBrowserApp(browser.environment);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(browser.requests.filter((request) => request.path === "/api/jobs/job-example/assessments/current").length, 1);
+  await browser.navigate("#jobs/job-other");
+  releaseAssessment();
+  await Promise.all([firstLoad, Promise.resolve()]);
+  assert.match(browser.html(), /<h1[^>]*>Other role<\/h1>/);
+  assert.match(browser.html(), /Assessment B/);
+  assert.doesNotMatch(browser.html(), /Assessment A/);
+});
+
+test("assessment refresh keeps the M3 opportunity draft and confirmation binding", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  browser.setAssessment("job-example", { assessment: { id: "assessment-a", recommendation: "consider", confidence: "high", summary: "Assessment A", createdAt: "2026-09-12T07:00:00.000Z", jobRef: { analysisId: "analysis-a" }, profileRef: { revisionId: "profile-a" }, requirementAssessments: [], preferenceChecks: [], blockers: [], anomalies: [], questions: [] }, freshness: { stale: false, reasons: [] } });
+  await initializeBrowserApp(browser.environment);
+  await browser.type("opportunity-form", { peerId: "job-other", relation: "different" });
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "different" });
+  const previous = browser.requests.length;
+  await browser.refresh();
+  assert.ok(browser.requests.length > previous);
+  assert.match(browser.html(), /value="job-other" selected/);
+  assert.match(browser.html(), /value="different" selected/);
+  assert.equal(browser.opportunityConfirmationChecked(), true);
 });
 
 test("opportunity controller requires an exact confirmation before saving", async () => {
@@ -863,6 +896,7 @@ function browserFixture(initialHash: string, narrow = false) {
   let detail: Record<string, any> = populatedFixture();
   let summaryJobs: Record<string, any>[] | undefined;
   let jobDetails: Record<string, Record<string, any>> = {};
+  let assessments: Record<string, Record<string, any> | undefined> = {};
   let note = "Initial local note";
   let profile = profileFixture();
   let profileHash: string | undefined = "profile-original";
@@ -941,6 +975,13 @@ function browserFixture(initialHash: string, narrow = false) {
         created = { ...jobSummary({ id: "job-created", title: undefined, company: undefined, hasAnalysis: false, decisionStatus: undefined, hasCvDraft: false, artifactStatus: { source: true, analysis: false, decision: false, cvDraft: false } }), raw: { content: input.content, source: { value: input.sourceReference } } };
         return Response.json(created, { status: 201 });
       }
+      const currentAssessment = path.match(/^\/api\/jobs\/([^/]+)\/assessments\/current$/);
+      if (currentAssessment) {
+        const payload = assessments[decodeURIComponent(currentAssessment[1]!)];
+        return payload === undefined ? Response.json({ error: "Not found" }, { status: 404 }) : Response.json(payload);
+      }
+      const matchContext = path.match(/^\/api\/jobs\/([^/]+)\/match-context$/);
+      if (matchContext) return Response.json({ status: "ready" });
       if (path === "/api/opportunities") return Response.json({ health: "healthy", snapshot: { pointerHash: "opportunity-original", revision: null }, groups: [{ key: "job-example", jobIds: ["job-example"] }, { key: "job-other", jobIds: ["job-other"] }], jobIds: ["job-example", "job-other"], repairJobIds: [] });
       if (options.method === "POST" && path === "/api/opportunities/decisions") return Response.json({ health: "healthy", snapshot: { pointerHash: "opportunity-saved", revision: { decisions: [{ leftId: "job-example", rightId: "job-other", relation: JSON.parse(options.body ?? "{}").relation }] } }, groups: [{ key: "job-example", jobIds: ["job-example", "job-other"] }], jobIds: ["job-example", "job-other"], repairJobIds: [] }, { status: 201, headers: { ETag: '"opportunity-saved"' } });
       if (path === "/api/summary") return Response.json({ jobs: summaryJobs ?? [jobSummary(), ...(created ? [created] : [])], profile, profileHash, profileSourceHash: sourceHash, profileError, profileRevision: undefined, profileHistory: { revisions: [] }, unresolvedClaims: [] });
@@ -996,6 +1037,7 @@ function browserFixture(initialHash: string, narrow = false) {
     setDetail(value: Record<string, any>) { detail = value; },
     setSummary(value: Record<string, any>[]) { summaryJobs = value; },
     setJobDetails(value: Record<string, Record<string, any>>) { jobDetails = value; },
+    setAssessment(jobId: string, value: Record<string, any> | undefined) { assessments = { ...assessments, [jobId]: value }; },
     html: () => app.innerHTML,
     focusCount: () => focused,
     async navigate(value: string) { window.location.hash = value; await navigation; },

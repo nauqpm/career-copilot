@@ -160,6 +160,20 @@ test("rejects traversal-like job IDs", async () => {
   await assert.rejects(readWorkspaceJob(root, "../profile"), /job id/);
 });
 
+test("adds assessment repair status without hiding the existing job summary", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
+  const job = await createPastedJob(root, { content: "Backend role" });
+  const assessments = join(root, "data", "jobs", job.id, "assessments");
+  await mkdir(assessments, { recursive: true });
+  await writeFile(join(assessments, "current.json"), "{broken", "utf8");
+
+  const [summary] = await listWorkspaceJobs(root);
+
+  assert.equal(summary?.id, job.id);
+  assert.equal(summary?.matchAssessment?.status, "needs-repair");
+  assert.equal(summary?.hasAnalysis, false);
+});
+
 test("accepts pasted JD through localhost", async () => {
   const root = await mkdtemp(join(tmpdir(), "career-workspace-"));
   const app = await startTestServer(root);

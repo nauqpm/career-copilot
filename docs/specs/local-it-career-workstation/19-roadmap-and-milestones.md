@@ -1,6 +1,6 @@
 # 19 — Roadmap and milestones
 
-> **Status:** M0 and M1 accepted; M2 profile evidence and immutable versions delivered 2026-09-04. M3 bounded intake/opportunity subset delivered across reviewed branches; broader milestones remain gated and planned.
+> **Status:** M0 and M1 accepted; M2 profile evidence and immutable versions delivered 2026-09-04. M3 bounded intake/opportunity subset and the bounded explainable-matching subset delivered 2026-09-12; broader milestones remain gated and planned.
 > **Related foundation:** [product scope](01-product-scope.md), [system architecture](02-system-architecture.md), [domain and artifact contracts](03-domain-model-and-artifact-contracts.md), [Vietnam IT localisation](18-vietnam-it-market-localization.md)
 > **M2 delivery record:** [profile evidence and versions](../../../reports/m2-profile-evidence-versions.md) · [M2 contract](04-profile-and-evidence.md)
 
@@ -61,6 +61,14 @@ M3 is delivered only for the bounded local subset: immutable paste/file captures
 
 **Exit criteria:** A candidate can inspect one JD, follow retained group members, compare advisory hints, record/correct a pair decision, and recover from stale or repair-marked state without any external side effect. Verification is recorded in the branch-local `report.md`.
 
+### Explainable matching — bounded subset delivered
+
+The delivered subset covers one verified local capture, one source-bound immutable analysis revision, one published profile revision with immutable leaf evidence, and immutable evidence-linked assessment revisions. The assessment snapshot binds the selected profile revision plus a canonical sorted `{id, hash}` list for every selected evidence artifact; publication rechecks that complete list against current bytes. The CLI and loopback API expose locked context, structure-only validation, create-only publication, history/current/detail reads and explicit `current`/`stale`/`needs-repair` freshness. The dashboard presents the assessment snapshot, exact source quotes, requirement modality/verdict, evidence IDs/claim paths when the matching context agrees, preference checks, blockers, anomalies, questions, stale reasons and local recovery instructions. Historical context reads use the saved analysis/profile IDs and exact evidence bindings, while repair reads fail closed without a usable recommendation.
+
+The workflow is local and skill-assisted: `skills/analyze-job/SKILL.md` and `skills/assess-job/SKILL.md` produce JSON proposals; TypeScript validates exact IDs, locators, evidence, hashes, timestamps, current-pointer expectations and safe paths. Legacy `analysis.json`, `decision.json`, profiles and M3 captures remain readable and are not silently migrated. A changed profile, analysis, policy or capture makes a previous assessment stale or repair-marked without changing its bytes. Verification uses synthetic Vietnamese/English fixtures and records fresh tests, build, coverage, whitespace and dependency audit results in [the delivery record](../../../reports/m4-explainable-matching.md) and `report.md`.
+
+**Exit criteria:** The bounded local flow can capture a JD, publish a source-bound analysis and profile/evidence, create a locked context, validate/publish/read an assessment, observe stale state after a new profile, and publish a replacement while retaining prior immutable bytes. This does not authorize provider execution, scoring/ranking, ontology or semantic equivalence, salary/commute inference, CV generation, profile mutation, approvals, connectors, database storage or external submission.
+
 The detailed documents in this folder isolate one decision surface at a time. The M2 contract is [04 — Profile and evidence](04-profile-and-evidence.md); implementation begins only after the relevant document is approved.
 
 | Order | Specification | Decision isolated by the document | Depends on |
@@ -88,4 +96,4 @@ Future additions such as a specific portal connector, document renderer or autom
 
 ## 6. Later milestones remain planned
 
-M3 adds job intake provenance and opportunity grouping. M4 adds explainable matching over fixed profile/job evidence. M5 adds document studio and review. M6 adds manual application archive/outcomes and approval foundations. M7 is controlled browser assistance only after those contracts exist. M3/M4 behavior is not part of the M2 implementation.
+M3 adds job intake provenance and opportunity grouping, and the bounded matching subset now consumes those fixed local artifacts. The broader matching capability, document studio (M5), manual application archive/outcomes and approval foundations (M6), and controlled browser assistance (M7) remain planned follow-up work. M3 and the delivered matching subset are additive to M2 and do not rewrite its profile or legacy artifacts.

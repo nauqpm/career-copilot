@@ -17,7 +17,9 @@ export type MatchBlocked = {
 export type MatchContext = {
   status: "ready";
   job: JobAnalysisRevision;
+  analysisHash: string;
   profile: ProfileRevision;
+  profileRevisionHash: string;
   evidence: EvidenceItem[];
   policyVersion: typeof MATCH_POLICY_VERSION;
 };
@@ -169,7 +171,9 @@ export async function readMatchContext(root: string, jobId: string, profileRevis
     return {
       status: "ready",
       job: analysis.revision,
+      analysisHash: analysis.revisionHash,
       profile: profile.revision,
+      profileRevisionHash: profile.revisionHash,
       evidence,
       policyVersion: MATCH_POLICY_VERSION,
     };

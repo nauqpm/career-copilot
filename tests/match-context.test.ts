@@ -9,6 +9,8 @@ import { createLocalJob } from "../src/workspace/storage.js";
 import { publishAnalysisRevision } from "../src/job/analysis-storage.js";
 import { publishProfileRevision } from "../src/profile/storage.js";
 import { readMatchContext } from "../src/match/context.js";
+import { hashMatchAssessment, type MatchAssessment } from "../src/match/schema.js";
+import { saveMatchAssessment } from "../src/match/storage.js";
 
 const source = [
   "Backend Engineer / Kỹ sư Backend",
@@ -83,6 +85,57 @@ test("returns a ready context from the verified capture, current analysis, and p
   assert.equal(context.profile.id, state.publishedProfile.revision.id);
   assert.ok(context.evidence.length > 0);
   assert.equal(new Set(context.evidence.map((item) => item.id)).size, context.evidence.length);
+});
+
+test("binds a context-built assessment to the exact analysis and profile artifacts", async () => {
+  const state = await fixture();
+  const context = await readMatchContext(state.root, state.job.id);
+
+  assert.equal(context.status, "ready");
+  if (context.status !== "ready") return;
+
+  const base: Omit<MatchAssessment, "contentHash"> = {
+    schemaVersion: 1,
+    id: "assessment-from-context",
+    createdAt: "2026-09-12T07:00:00.000Z",
+    createdBy: {
+      kind: "agent",
+      role: "match-analyst",
+      skillVersion: "assess-job@1",
+      model: "local-test-model",
+      promptHash: hash("assessment-prompt"),
+    },
+    jobRef: {
+      jobId: context.job.jobId,
+      captureId: context.job.capture.id,
+      captureHash: context.job.capture.manifestHash,
+      sourceHash: context.job.capture.sourceHash,
+      analysisId: context.job.id,
+      analysisHash: context.analysisHash,
+    },
+    profileRef: { revisionId: context.profile.id, revisionHash: context.profileRevisionHash },
+    policyVersion: "m4-v1",
+    recommendation: "consider",
+    confidence: "high",
+    summary: "The exact context artifacts have been reviewed.",
+    requirementAssessments: context.job.analysis.requirements.map((requirement) => ({
+      requirementId: requirement.id,
+      modality: requirement.priority ?? "unknown",
+      verdict: "unknown" as const,
+      explanation: "The selected context does not establish this requirement.",
+      evidenceIds: [],
+    })),
+    preferenceChecks: [],
+    blockers: [],
+    questions: [],
+    anomalies: [],
+  };
+  const assessment: MatchAssessment = { ...base, contentHash: hashMatchAssessment(base) };
+
+  const saved = await saveMatchAssessment(state.root, state.job.id, assessment, null);
+
+  assert.equal(saved.assessment.jobRef.analysisHash, context.analysisHash);
+  assert.equal(saved.assessment.profileRef.revisionHash, context.profileRevisionHash);
 });
 
 test("does not fall back when an explicit profile revision is unknown", async () => {

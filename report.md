@@ -260,3 +260,31 @@ git diff --check
 - Whitespace check: **passed**.
 
 The focused fixtures cover exact profile selection without fallback, blocked legacy/corrupt inputs, immutable assessment bytes, reserved IDs, stale pointer conflicts with orphan retention, live reference/hash validation, dangling pointer repair, malformed/renamed orphan isolation, safe-path error propagation, and stale detection for profile, analysis, policy and source changes. All tests use synthetic temporary workspaces; no private career data or external provider was used.
+
+## Task 4 round-1 fix — exact assessment bindings (2026-09-12)
+
+The first review found that a ready `MatchContext` retained parsed revisions but dropped the exact on-disk hashes that `saveMatchAssessment` requires. The context now exposes `analysisHash` and `profileRevisionHash`; the assess-job contract tells producers to copy them directly into `jobRef.analysisHash` and `profileRef.revisionHash` without recomputing or inventing values. Existing parsed revisions, evidence and policy fields remain unchanged.
+
+### RED evidence
+
+After adding the context-to-storage integration regression and before exposing the hashes:
+
+```powershell
+node .\node_modules\tsx\dist\cli.mjs --test tests/match-context.test.ts
+```
+
+Result: **5 tests ran, 4 passed, 1 failed**. The new producer-path regression failed at assessment parsing with `jobRef.analysisHash must be a lowercase SHA-256 value`, proving that context-only construction could not reach storage.
+
+### GREEN and regression evidence
+
+```powershell
+node .\node_modules\tsx\dist\cli.mjs --test tests/match-context.test.ts tests/match-storage.test.ts
+$testFiles = @(rg --files tests -g '*.test.ts'); & '.\node_modules\.bin\tsx.CMD' --test $testFiles
+npm run build
+git diff --check
+```
+
+- Focused context/storage suite: **12 passed, 0 failed, 0 skipped**.
+- Complete repository test tree: **257 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- Whitespace check: **passed**.

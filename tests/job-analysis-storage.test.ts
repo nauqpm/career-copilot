@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -110,6 +110,15 @@ test("publishes a verified capture as a create-only current analysis", async () 
   assert.deepEqual(JSON.parse((await readArtifact(join(state.directory, "analyses", "analysis-one.json")))!.content), draft);
 });
 
+test("rejects the reserved current revision ID before writing any analysis artifact", async () => {
+  const state = await fixture();
+  await assert.rejects(
+    publishAnalysisRevision(state.root, state.job.id, state.draft("current"), null),
+    /reserved|current/i,
+  );
+  assert.equal(await readArtifact(join(state.directory, "analyses", "current.json")), undefined);
+});
+
 test("compares the current pointer, preserves old bytes, and exposes history", async () => {
   const state = await fixture();
   const first = await publishAnalysisRevision(state.root, state.job.id, state.draft("analysis-one", "First title"), null);
@@ -125,6 +134,18 @@ test("compares the current pointer, preserves old bytes, and exposes history", a
   assert.equal(history.revisions.find((revision) => revision.id === "analysis-one")?.active, false);
   assert.equal(history.revisions.find((revision) => revision.id === "analysis-two")?.active, true);
   assert.equal(history.current?.revisionId, "analysis-two");
+});
+
+test("ignores a revision whose filename stem was renamed", async () => {
+  const state = await fixture();
+  await publishAnalysisRevision(state.root, state.job.id, state.draft("analysis-one"), null);
+  await rename(
+    join(state.directory, "analyses", "analysis-one.json"),
+    join(state.directory, "analyses", "renamed.json"),
+  );
+
+  const history = await readAnalysisHistory(state.root, state.job.id);
+  assert.deepEqual(history.revisions, []);
 });
 
 test("rejects a stale pointer after leaving the valid revision orphaned", async () => {
@@ -163,6 +184,16 @@ test("isolates malformed orphan analysis files from valid history", async () => 
   assert.deepEqual(history.revisions.map((revision) => revision.id), [first.revision.id]);
 });
 
+test("propagates path-safety errors from JSON history entries", async () => {
+  const state = await fixture();
+  await publishAnalysisRevision(state.root, state.job.id, state.draft("analysis-one"), null);
+  const target = join(state.root, "outside-analysis.json");
+  await writeFile(target, "{broken", "utf8");
+  await symlink(target, join(state.directory, "analyses", "linked.json"));
+
+  await assert.rejects(readAnalysisHistory(state.root, state.job.id), /symbolic link|unsafe/i);
+});
+
 test("refuses legacy, missing-manifest, and changed-source jobs", async () => {
   const legacyRoot = await mkdtemp(join(tmpdir(), "career-analysis-legacy-"));
   const legacyDirectory = join(legacyRoot, "data", "jobs", "job-legacy");
@@ -180,6 +211,36 @@ test("refuses legacy, missing-manifest, and changed-source jobs", async () => {
   const changedSource = await fixture();
   await writeFile(join(changedSource.directory, "source.md"), `${source} changed`, "utf8");
   await assert.rejects(publishAnalysisRevision(changedSource.root, changedSource.job.id, changedSource.draft("analysis-changed-source"), null), /source|capture/i);
+});
+
+test("refuses a changed source manifest and a tampered raw capture binding", async () => {
+  const changedManifest = await fixture();
+  const manifestPath = join(changedManifest.directory, "source.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+  manifest.sourceReference = "Tampered source";
+  const { contentHash: _ignored, ...withoutHash } = manifest;
+  manifest.contentHash = hash(JSON.stringify(withoutHash));
+  await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, "utf8");
+  const changedManifestArtifact = (await readArtifact(manifestPath))!;
+  const rawPath = join(changedManifest.directory, "raw.json");
+  const raw = JSON.parse(await readFile(rawPath, "utf8")) as { source: { value: string }; capture: { manifestHash: string } };
+  raw.source.value = "Tampered source";
+  raw.capture.manifestHash = changedManifestArtifact.hash;
+  await writeFile(rawPath, `${JSON.stringify(raw)}\n`, "utf8");
+  await assert.rejects(
+    publishAnalysisRevision(changedManifest.root, changedManifest.job.id, changedManifest.draft("analysis-changed-manifest"), null),
+    /manifest hash|source\.json/i,
+  );
+
+  const tamperedRaw = await fixture();
+  const tamperedRawPath = join(tamperedRaw.directory, "raw.json");
+  const tampered = JSON.parse(await readFile(tamperedRawPath, "utf8")) as { capture: { manifestHash: string } };
+  tampered.capture.manifestHash = hash("wrong-manifest");
+  await writeFile(tamperedRawPath, `${JSON.stringify(tampered)}\n`, "utf8");
+  await assert.rejects(
+    publishAnalysisRevision(tamperedRaw.root, tamperedRaw.job.id, tamperedRaw.draft("analysis-tampered-raw"), null),
+    /raw\.json|capture/i,
+  );
 });
 
 test("CLI emits only source-bound context and publishes without model execution", async () => {

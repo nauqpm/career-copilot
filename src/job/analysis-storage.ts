@@ -42,6 +42,14 @@ export type AnalysisContext = {
 
 const safeIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
+const reservedRevisionId = "current";
+
+class InvalidHistoryRevisionError extends Error {
+  constructor(cause: unknown) {
+    super("Analysis history revision is malformed or source-mismatched", { cause });
+    this.name = "InvalidHistoryRevisionError";
+  }
+}
 
 export async function readCurrentAnalysis(root: string, jobId: string): Promise<AnalysisSnapshot | undefined> {
   const capture = await readVerifiedCapture(root, jobId);
@@ -75,7 +83,7 @@ export async function readAnalysisHistory(root: string, jobId: string): Promise<
   let entries: string[] = [];
   try {
     entries = (await readdir(analysesDirectory(capture.directory), { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && entry.name !== "current.json")
+      .filter((entry) => entry.name.endsWith(".json") && entry.name !== "current.json")
       .map((entry) => entry.name);
   } catch (error) {
     if (!isCode(error, "ENOENT")) throw error;
@@ -83,17 +91,20 @@ export async function readAnalysisHistory(root: string, jobId: string): Promise<
 
   const revisions: AnalysisHistory["revisions"] = [];
   for (const entry of entries) {
+    const artifact = await readArtifact(join(analysesDirectory(capture.directory), entry));
+    if (artifact === undefined) continue;
     try {
-      const artifact = await readArtifact(join(analysesDirectory(capture.directory), entry));
-      if (artifact === undefined) continue;
-      const revision = parseRevision(readJson(artifact.content, "Analysis revision"), capture, jobId);
+      const revision = parseHistoryRevision(artifact.content, capture, jobId);
+      const filenameStem = entry.slice(0, -".json".length);
+      if (filenameStem !== revision.id) continue;
       revisions.push({
         id: revision.id,
         createdAt: revision.createdAt,
         revisionHash: artifact.hash,
         active: current?.revisionId === revision.id && current.revisionHash === artifact.hash,
       });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof InvalidHistoryRevisionError)) throw error;
       // Malformed and source-mismatched orphan files remain available for repair, but
       // cannot be presented as part of validated history.
     }
@@ -118,6 +129,7 @@ export async function publishAnalysisRevision(
 
   const capture = await readVerifiedCapture(root, jobId);
   const revision = parseRevision(draft, capture, jobId);
+  if (revision.id === reservedRevisionId) throw new Error("Analysis revision ID 'current' is reserved");
   const serialized = `${JSON.stringify(revision, null, 2)}\n`;
   const revisionHash = await writeArtifact(revisionPath(capture.directory, revision.id), serialized, null);
   const pointer: AnalysisCurrentPointer = { schemaVersion: 1, revisionId: revision.id, revisionHash };
@@ -205,8 +217,16 @@ function parseRevision(value: unknown, capture: VerifiedCapture, jobId: string):
   return revision;
 }
 
+function parseHistoryRevision(content: string, capture: VerifiedCapture, jobId: string): JobAnalysisRevision {
+  try {
+    return parseRevision(readJson(content, "Analysis revision"), capture, jobId);
+  } catch (error) {
+    throw new InvalidHistoryRevisionError(error);
+  }
+}
+
 function parsePointer(value: unknown): AnalysisCurrentPointer {
-  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.revisionId !== "string" || !safeIdPattern.test(value.revisionId) || typeof value.revisionHash !== "string" || !hashPattern.test(value.revisionHash)) {
+  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.revisionId !== "string" || !safeIdPattern.test(value.revisionId) || value.revisionId === reservedRevisionId || typeof value.revisionHash !== "string" || !hashPattern.test(value.revisionHash)) {
     throw new Error("Analysis current pointer is invalid");
   }
   return { schemaVersion: 1, revisionId: value.revisionId, revisionHash: value.revisionHash };

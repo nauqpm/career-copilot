@@ -131,3 +131,37 @@ git diff --check
 - Whitespace check: **passed**.
 
 Coverage includes first create-only publication, second revision pointer comparison, immutable old bytes, stale pointer conflicts with valid orphan retention, malformed and dangling pointer repair behavior, malformed orphan isolation, and refusal of legacy, missing-manifest, changed-source and changed-raw capture state. CLI tests confirm context output contains only the selected job/source binding and that publication reports the revision ID/hash without model execution. Existing capture bytes and M3 opportunity flow remain green; no legacy artifact or unrelated worktree file was changed.
+
+## Task 2 round-1 hardening (2026-09-12)
+
+The review fixes reserve `current` as an analysis revision ID before any write, require each history file's JSON filename stem to equal its validated revision ID, add live changed-manifest and raw capture-binding regressions, and separate history artifact I/O from expected malformed/source-mismatch parsing. History now propagates path-safety and unexpected read errors instead of swallowing them; only invalid revision content is isolated.
+
+### RED evidence
+
+Command:
+
+```powershell
+pnpm exec tsx --test tests/job-analysis-storage.test.ts
+```
+
+Observed after adding the four review regressions and before the hardening changes: **11 tests ran, 8 passed, 3 failed**. The expected failures were the reserved `current` ID (a pointer conflict instead of a reserved-ID error), renamed filename stem still listed as active, and a symlink JSON history entry being silently skipped instead of raising a path-safety error. The changed-manifest and tampered-raw-binding cases already failed closed and remained as explicit coverage.
+
+### GREEN and regression evidence
+
+Commands:
+
+```powershell
+pnpm exec tsx --test tests/job-analysis-storage.test.ts
+pnpm exec tsx --test tests/job-analysis-storage.test.ts tests/job-capture.test.ts tests/m3-opportunity-flow.test.ts
+pnpm test
+npm run build
+git diff --check
+```
+
+- Hardened Task 2 tests: **11 passed, 0 failed, 0 skipped**.
+- Hardened Task 2 plus M3 capture/opportunity regressions: **27 passed, 0 failed, 0 skipped**.
+- Registered repository suite: **217 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- Whitespace check: **passed**.
+
+The prior immutable publication, stale-pointer, legacy refusal, exact-source CLI, capture-byte and opportunity-flow guarantees remain green. Unrelated untracked M3 artifacts remain untouched.

@@ -5,7 +5,7 @@ import { mergeProfileSection, profileToSectionDraft } from "./profile-form.js";
 export function initializeBrowserApp(browser = globalThis) {
   const { document, window, fetch, FormData, File } = browser;
   const app = document.querySelector("#app");
-  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, opportunity: undefined, opportunityConfirmationKey: undefined, profile: undefined, profileReady: false, note: "", jobDraft: {}, opportunityDraft: {}, error: "", notice: "", menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
+  let state = { route: parseRoute(window.location.hash), summary: { jobs: [] }, detail: undefined, opportunity: undefined, assessmentState: undefined, opportunityConfirmationKey: undefined, profile: undefined, profileReady: false, note: "", jobDraft: {}, opportunityDraft: {}, error: "", notice: "", menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
   let loadVersion = 0;
   let pendingNotice;
   let profileDrafts = {};
@@ -36,11 +36,12 @@ export function initializeBrowserApp(browser = globalThis) {
     let loadedNoteHash;
     refreshing = true;
     try {
-      const [loadedSummary, detail, note, opportunity] = await Promise.all([
+      const [loadedSummary, detail, note, opportunity, assessmentState] = await Promise.all([
         route.page === "new-job" ? state.summary : requestJson("/api/summary"),
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}`) : undefined,
         route.page === "job" ? requestJson(`/api/jobs/${encodeURIComponent(route.jobId)}/note`, {}, (hash) => { loadedNoteHash = hash; }) : undefined,
         route.page === "job" ? requestJson("/api/opportunities").catch((error) => ({ health: "needs-repair", warning: error.message, snapshot: null, groups: [], jobIds: [] })) : undefined,
+        route.page === "job" ? requestAssessment(route.jobId) : undefined,
       ]);
       const hydratedSummary = await hydrateCvRecommendations(loadedSummary, route);
       if (version !== loadVersion) return;
@@ -48,13 +49,13 @@ export function initializeBrowserApp(browser = globalThis) {
       const summary = loadedProfileVersion === profileVersion ? hydratedSummary : { ...hydratedSummary, profile: state.profile, profileHash: state.summary.profileHash, profileRevision: state.summary.profileRevision, profileHistory: state.summary.profileHistory, unresolvedClaims: state.summary.unresolvedClaims };
       if (loadedNoteVersion === noteVersions[route.jobId]) noteHashes = { ...noteHashes, [route.jobId]: loadedNoteHash };
       const content = loadedNoteVersion === noteVersions[route.jobId] ? note?.content ?? "" : state.note;
-      const changed = JSON.stringify([state.summary, state.detail, state.opportunity, state.note]) !== JSON.stringify([summary, detail, opportunity, content]);
+      const changed = JSON.stringify([state.summary, state.detail, state.opportunity, state.assessmentState, state.note]) !== JSON.stringify([summary, detail, opportunity, assessmentState, content]);
       const opportunityChanged = JSON.stringify(state.opportunity) !== JSON.stringify(opportunity);
       const sameJobRoute = state.route.page === "job" && route.page === "job" && state.route.jobId === route.jobId;
       const nextOpportunityConfirmationKey = sameJobRoute && !opportunityChanged
         ? state.opportunityConfirmationKey
         : undefined;
-      state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, opportunity, opportunityConfirmationKey: nextOpportunityConfirmationKey, note: content, error: automatic ? state.error : "", loading: false };
+      state = { ...state, route, summary, profile: summary.profile, profileReady: route.page !== "new-job" || state.profileReady, detail, opportunity, assessmentState, opportunityConfirmationKey: nextOpportunityConfirmationKey, note: content, error: automatic ? state.error : "", loading: false };
       if (automatic && !changed) return;
       render(focus);
     } catch (error) {
@@ -79,6 +80,40 @@ export function initializeBrowserApp(browser = globalThis) {
       } catch { return { ...job, cvRecommendationError: true }; }
     }));
     return { ...summary, jobs };
+  }
+
+  async function requestAssessment(jobId) {
+    try {
+      const response = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/assessments/current`);
+      let context;
+      const profileRevision = response.assessment?.profileRef?.revisionId;
+      if (profileRevision) {
+        try {
+          const candidateContext = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/match-context?profileRevision=${encodeURIComponent(profileRevision)}`);
+          if (candidateContext?.status === "ready") context = candidateContext;
+        } catch {
+          // A stale assessment remains useful even when its old context cannot be reconstructed.
+        }
+      }
+      return { ...response, ...(context ? { context } : {}), status: response.freshness?.stale ? "stale" : "current" };
+    } catch (error) {
+      if (error.status === 404) {
+        try {
+          const context = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/match-context`);
+          return context?.status === "blocked" ? context : { status: "missing", context };
+        } catch (contextError) {
+          if (contextError.status === 404) return { status: "missing" };
+          return {
+            status: "needs-repair",
+            remediation: [{ code: "assessment-context-read-failed", message: "Không thể kiểm tra dữ liệu đầu vào assessment. Hãy khôi phục dữ liệu cục bộ rồi tải lại." }],
+          };
+        }
+      }
+      return {
+        status: "needs-repair",
+        remediation: [{ code: "assessment-read-failed", message: "Không thể đọc assessment cục bộ. Hãy khôi phục dữ liệu assessment hoặc kiểm tra máy chủ cục bộ rồi tải lại." }],
+      };
+    }
   }
 
   app.addEventListener("click", (event) => {
@@ -330,9 +365,9 @@ export function initializeBrowserApp(browser = globalThis) {
     } catch {
       throw new Error("Không kết nối được ứng dụng cục bộ. Hãy kiểm tra máy chủ và thử tải lại.");
     }
-    if (response.status === 409) throw new Error("Dữ liệu đã thay đổi ở nơi khác. Nội dung đang nhập được giữ nguyên. Hãy sao chép bản nháp, tải lại và mở lại biểu mẫu để đối chiếu trước khi lưu.");
-    if (response.status === 428) throw new Error("Thiếu phiên bản dữ liệu. Hãy tải lại và mở lại biểu mẫu trước khi lưu.");
-    if (!response.ok) throw new Error(response.status === 404 ? "Không tìm thấy dữ liệu cục bộ được yêu cầu." : response.status === 400 ? "Dữ liệu chưa hợp lệ. Kiểm tra nội dung rồi thử lưu lại." : "Không xử lý được yêu cầu cục bộ. Hãy thử lại.");
+    if (response.status === 409) throw Object.assign(new Error("Dữ liệu đã thay đổi ở nơi khác. Nội dung đang nhập được giữ nguyên. Hãy sao chép bản nháp, tải lại và mở lại biểu mẫu để đối chiếu trước khi lưu."), { status: response.status });
+    if (response.status === 428) throw Object.assign(new Error("Thiếu phiên bản dữ liệu. Hãy tải lại và mở lại biểu mẫu trước khi lưu."), { status: response.status });
+    if (!response.ok) throw Object.assign(new Error(response.status === 404 ? "Không tìm thấy dữ liệu cục bộ được yêu cầu." : response.status === 400 ? "Dữ liệu chưa hợp lệ. Kiểm tra nội dung rồi thử lưu lại." : "Không xử lý được yêu cầu cục bộ. Hãy thử lại."), { status: response.status });
     onVersion?.(response.headers?.get("ETag") ?? undefined);
     if (response.status === 204) return undefined;
     return response.json();
@@ -341,7 +376,7 @@ export function initializeBrowserApp(browser = globalThis) {
   window.addEventListener("hashchange", () => {
     const notice = pendingNotice?.hash === window.location.hash ? pendingNotice.message : "";
     pendingNotice = undefined;
-    state = { ...state, route: parseRoute(window.location.hash), detail: undefined, opportunity: undefined, opportunityConfirmationKey: undefined, opportunityDraft: {}, note: "", notice, error: "", loading: true, menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
+    state = { ...state, route: parseRoute(window.location.hash), detail: undefined, opportunity: undefined, assessmentState: undefined, opportunityConfirmationKey: undefined, opportunityDraft: {}, note: "", notice, error: "", loading: true, menuOpen: !window.matchMedia?.("(max-width: 760px)").matches };
     render();
     return refresh(true);
   });

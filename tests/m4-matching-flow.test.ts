@@ -212,8 +212,10 @@ test("assessment read APIs expose quoted pointer/artifact ETags and freshness", 
     const currentResponse = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/current`);
     assert.equal(currentResponse.status, 200);
     assert.equal(currentResponse.headers.get("etag"), `"${saved.pointerHash}"`);
-    const current = await currentResponse.json() as { assessment: { id: string }; freshness: { stale: boolean } };
+    const current = await currentResponse.json() as { assessment: MatchAssessment; freshness: { stale: boolean } };
     assert.equal(current.assessment.id, "assessment-one");
+    assert.equal(current.assessment.recommendation, "consider");
+    assert.equal(current.assessment.requirementAssessments.length, 2);
     assert.deepEqual(current.freshness, { stale: false, reasons: [] });
 
     const detailResponse = await fetch(`${app.url}/api/jobs/${state.job.id}/assessments/assessment-one`);

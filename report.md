@@ -383,3 +383,19 @@ pnpm audit --audit-level=high
 - `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
 
 The direct sandboxed Node launcher remains blocked by the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` boundary; authorized local runtime evidence was used. Unrelated untracked artifacts remain preserved.
+
+## Task 6 — explainable matching UI (2026-09-12)
+
+The existing job-detail page now presents the read-only M4 assessment in evidence-first order: version snapshot and freshness, recommendation, requirement matrix, preference checks, blockers/anomalies/questions, and local rerun instructions. Requirement rows preserve source quotes and modalities, label every supported/partial/not-evidenced/unknown/conflicting/not-applicable verdict, and show evidence IDs with claim paths when the locked match context is available. Missing, blocked and needs-repair states provide local recovery guidance without exposing raw errors. Legacy decisions are explicitly labelled `Đánh giá cũ — chưa khóa phiên bản` only when no M4 assessment is available. No score, Apply, authoring or mutation action was added.
+
+### Task 6 RED/GREEN evidence
+
+The initial `pnpm exec tsx --test tests/opportunity-ui.test.ts tests/web-smoke.test.ts tests/m4-matching-flow.test.ts` wrapper could not resolve local `tsx`; the equivalent sandboxed local-bin invocation hit the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` startup boundary. The authorized local-bin run then reproduced the expected missing-assessment UI failures before implementation. Final authorized checks:
+
+- Focused Task 6/UI/API suite: **81 passed, 0 failed, 0 skipped**.
+- Complete test tree: **276 passed, 0 failed, 0 skipped**.
+- `npm run build`: **passed**.
+- `git diff --check`: **passed**.
+- `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
+
+The browser race test proves a late prior-route assessment cannot overwrite the current job; the refresh test preserves the M3 opportunity draft and exact confirmation binding. Semantic table headers/caption, alert/status recovery messaging, existing focus-visible styling and narrow-screen horizontal table overflow were retained. Assessment reads remain local and read-only; no provider call, CV generation, external submission or mutation route was added. See `.superpowers/sdd/2026-09-12-m4-explainable-matching/task-6-report.md` for the detailed delivery record.

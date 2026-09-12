@@ -148,6 +148,51 @@ test("unchanged opportunity polling preserves a checked confirmation", async () 
   assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 1);
 });
 
+test("clear uses its own exact confirmation and submits only the selected pair", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+
+  await browser.confirmClear("job-other");
+  await browser.submit("opportunity-clear-form", { peerId: "job-other", relation: "clear", confirmed: "true" });
+
+  const writes = browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions");
+  assert.equal(writes.length, 2);
+  assert.deepEqual(JSON.parse(writes[1]?.options.body ?? "{}"), { leftId: "job-example", rightId: "job-other", relation: "clear", confirmed: true });
+});
+
+test("opportunity forms reject relations owned by the other action", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "clear" });
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "clear", confirmed: "true" });
+  await browser.confirmClear("job-other", "same");
+  await browser.submit("opportunity-clear-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+
+  assert.equal(browser.requests.filter((request) => request.options.method === "POST" && request.path === "/api/opportunities/decisions").length, 0);
+});
+
+test("a delayed clear preserves a newer normal decision draft", async () => {
+  const browser = browserFixture("#jobs/job-example");
+  await initializeBrowserApp(browser.environment);
+  await browser.confirmOpportunity({ peerId: "job-other", relation: "same" });
+  await browser.submit("opportunity-form", { peerId: "job-other", relation: "same", confirmed: "true" });
+  await browser.confirmClear("job-other");
+
+  let releaseClear!: () => void;
+  const clearGate = new Promise<void>((resolve) => { releaseClear = resolve; });
+  browser.beforeRequest((_path, options) => options.method === "POST" ? clearGate : Promise.resolve());
+  const clearing = browser.submit("opportunity-clear-form", { peerId: "job-other", relation: "clear", confirmed: "true" });
+  await browser.type("opportunity-form", { peerId: "job-other", relation: "different" });
+  releaseClear();
+  await clearing;
+
+  assert.match(browser.html(), /value="job-other" selected/);
+  assert.match(browser.html(), /value="different" selected/);
+});
+
 test("opportunity input changes clear the live confirmation while preserving the draft", async () => {
   const browser = browserFixture("#jobs/job-example");
   await initializeBrowserApp(browser.environment);
@@ -783,10 +828,12 @@ function browserFixture(initialHash: string, narrow = false) {
   const requests: { path: string; options: { method?: string; body?: string; headers?: Record<string, string> } }[] = [];
   let currentForm: any;
   let renderedHtml = "";
+  let renderGeneration = 0;
   const app = {
     get innerHTML() { return renderedHtml; },
     set innerHTML(html: string) {
       renderedHtml = html;
+      renderGeneration += 1;
       currentForm = undefined;
       if (html.includes('id="job-form"')) {
         currentForm = makeForm("job-form", {
@@ -861,7 +908,7 @@ function browserFixture(initialHash: string, narrow = false) {
       fields: Record<string, string | File>;
       constructor(form: { id?: string; fields: Record<string, string | File>; confirmation?: { checked: boolean } }) {
         this.fields = { ...form.fields };
-        if (form.id === "opportunity-form") {
+        if (["opportunity-form", "opportunity-clear-form"].includes(form.id ?? "")) {
           if (form.confirmation?.checked) this.fields.confirmed = "true";
           else delete this.fields.confirmed;
         }
@@ -907,13 +954,14 @@ function browserFixture(initialHash: string, narrow = false) {
     },
   };
   function makeForm(id: string, fields: Record<string, string | File>) {
+    const createdGeneration = renderGeneration;
     const form: any = {
       id,
       fields,
-      confirmation: { checked: id === "opportunity-form" && fields.confirmed === "true" },
-      get isConnected() { return currentForm === form; },
+      confirmation: { checked: ["opportunity-form", "opportunity-clear-form"].includes(id) && fields.confirmed === "true" },
+      get isConnected() { return createdGeneration === renderGeneration && renderedHtml.includes(`id="${id}"`); },
       querySelector(selector: string) {
-        if (id === "opportunity-form" && selector === 'input[name="confirmed"]') return form.confirmation;
+        if (["opportunity-form", "opportunity-clear-form"].includes(id) && selector === 'input[name="confirmed"]') return form.confirmation;
         return { disabled: false };
       },
     };
@@ -923,7 +971,7 @@ function browserFixture(initialHash: string, narrow = false) {
     if (currentForm?.id !== id) currentForm = makeForm(id, fields ?? {});
     else if (fields) {
       currentForm.fields = { ...fields };
-      if (id === "opportunity-form" && Object.hasOwn(fields, "confirmed")) currentForm.confirmation.checked = fields.confirmed === "true";
+      if (["opportunity-form", "opportunity-clear-form"].includes(id) && Object.hasOwn(fields, "confirmed")) currentForm.confirmation.checked = fields.confirmed === "true";
     }
     return currentForm;
   }
@@ -959,6 +1007,11 @@ function browserFixture(initialHash: string, narrow = false) {
     },
     async confirmOpportunity(fields: Record<string, string>) {
       const form = updateForm("opportunity-form", { ...fields, confirmed: "true" });
+      form.confirmation.checked = true;
+      await pageEvents.get("change")?.({ target: { closest: () => form, name: "confirmed", checked: true } });
+    },
+    async confirmClear(peerId: string, relation = "clear") {
+      const form = updateForm("opportunity-clear-form", { peerId, relation, confirmed: "true" });
       form.confirmation.checked = true;
       await pageEvents.get("change")?.({ target: { closest: () => form, name: "confirmed", checked: true } });
     },

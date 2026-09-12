@@ -399,3 +399,29 @@ The initial `pnpm exec tsx --test tests/opportunity-ui.test.ts tests/web-smoke.t
 - `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
 
 The browser race test proves a late prior-route assessment cannot overwrite the current job; the refresh test preserves the M3 opportunity draft and exact confirmation binding. Semantic table headers/caption, alert/status recovery messaging, existing focus-visible styling and narrow-screen horizontal table overflow were retained. Assessment reads remain local and read-only; no provider call, CV generation, external submission or mutation route was added. See `.superpowers/sdd/2026-09-12-m4-explainable-matching/task-6-report.md` for the detailed delivery record.
+
+## Task 6 round-1 fix — preserve assessment evidence context (2026-09-12)
+
+The review findings are fixed with three regression tests and a narrow renderer/controller update. Optional `match-context` data is now accepted only when its analysis ID/hash and profile revision ID/hash exactly match the assessment references. A stale assessment with a changed current analysis keeps its original requirement/evidence IDs but shows safe unavailable labels instead of borrowing current quotes or claim paths. Needs-repair states no longer count as readable assessments, so an accompanying legacy decision is labelled `Đánh giá cũ — chưa khóa phiên bản`; a readable current/stale assessment still suppresses that label. The evidence matrix is now a keyboard-focusable, Vietnamese-labelled horizontal region with an existing-token focus outline.
+
+### RED evidence
+
+After adding the changed-analysis, repair-plus-legacy, and keyboard-scroll regressions, the authorized focused run recorded **84 tests: 81 passed, 3 failed**. The failures were the expected borrowed quote/claim path, missing legacy label in needs-repair, and missing keyboard-scroll region.
+
+### GREEN and verification evidence
+
+```powershell
+.\node_modules\.bin\tsx.CMD --test tests/opportunity-ui.test.ts tests/web-smoke.test.ts tests/m4-matching-flow.test.ts
+$testFiles = @(rg --files tests -g '*.test.ts'); & '.\node_modules\.bin\tsx.CMD' --test $testFiles
+npm run build
+git diff --check
+pnpm audit --audit-level=high
+```
+
+- Focused Task 6 round-1 suite: **84 passed, 0 failed, 0 skipped**.
+- Complete test tree: **279 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- Whitespace check: **passed**.
+- Dependency audit: **no known vulnerabilities found**.
+
+Unrelated untracked M3 review artifacts remain preserved. See `.superpowers/sdd/2026-09-12-m4-explainable-matching/task-6-report.md` for the detailed fix record.

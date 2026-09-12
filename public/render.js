@@ -66,7 +66,7 @@ export function renderJobDetail(detail, note = "", opportunity, opportunityDraft
   const analysis = detail.analysis;
   const decision = detail.decision;
   const assessment = assessmentState?.assessment;
-  const hasCurrentAssessment = Boolean(assessment) || ["current", "stale", "needs-repair"].includes(assessmentState?.status) || ["current", "stale", "needs-repair"].includes(detail.matchAssessment?.status);
+  const hasCurrentAssessment = Boolean(assessment) || ["current", "stale"].includes(assessmentState?.status) || ["current", "stale"].includes(detail.matchAssessment?.status);
   const title = analysis?.title ?? detail.title ?? "JD chưa có tiêu đề";
   const company = analysis?.company ?? detail.company ?? "Chưa có tên đơn vị";
   return `${pageHeader(title, company)}
@@ -272,16 +272,29 @@ function renderAssessment(detail, assessmentState) {
   const status = stale ? "stale" : "current";
   const freshnessReasons = assessmentState.freshness?.reasons ?? assessmentState.staleReasons ?? [];
   const captureDate = detail.capture?.createdAt ?? detail.captureCreatedAt;
-  const sourceRequirements = assessmentState.context?.job?.analysis?.requirements ?? detail.analysis?.requirements ?? [];
+  const context = assessmentContextFor(assessment, assessmentState.context);
+  const contextAttempted = Object.hasOwn(assessmentState, "context");
+  const sourceRequirements = context?.job?.analysis?.requirements ?? (contextAttempted ? [] : detail.analysis?.requirements ?? []);
+  const renderState = context ? { ...assessmentState, context } : contextAttempted ? { ...assessmentState, context: null } : assessmentState;
   return `<section class="detail-section assessment-section" aria-labelledby="assessment-heading" data-assessment-status="${status}">
     <header class="assessment-snapshot"><div><p class="eyebrow">Đánh giá phiên bản</p><h2 id="assessment-heading">Đánh giá phiên bản</h2><p class="assessment-binding">Phân tích <code>${escapeHtml(assessment.jobRef?.analysisId ?? "Chưa rõ")}</code> · Hồ sơ <code>${escapeHtml(assessment.profileRef?.revisionId ?? "Chưa rõ")}</code></p></div><span class="decision-status status-${status}">${assessmentStatusLabels[status]}</span></header>
     <dl class="assessment-meta">${definition("Ngày tạo đánh giá", assessment.createdAt ?? "Chưa rõ")}${definition("Ngày nhập JD", captureDate ?? "Chưa rõ")}${definition("Độ tin cậy", assessment.confidence ?? "Chưa rõ")}</dl>
     <section class="assessment-recommendation"><h3>Khuyến nghị: ${escapeHtml(recommendationLabels[assessment.recommendation] ?? assessment.recommendation ?? "Chưa rõ")}</h3><p>${escapeHtml(assessment.summary)}</p>${stale ? `<p class="warning" role="status">Đánh giá này đã cũ; dữ liệu đầu vào đã thay đổi. ${freshnessReasons.length ? `Lý do: ${freshnessReasons.map((reason) => escapeHtml(reason)).join("; ")}.` : "Hãy chạy lại trên phiên bản đã chọn."}</p>` : ""}</section>
-    ${renderAssessmentRequirements(assessment, sourceRequirements, detail, assessmentState)}
-    ${renderPreferenceChecks(assessment.preferenceChecks, detail, assessmentState)}
-    ${renderAssessmentFindings(assessment.blockers, assessment.anomalies, assessment.questions, detail, assessmentState)}
+    ${renderAssessmentRequirements(assessment, sourceRequirements, detail, renderState)}
+    ${renderPreferenceChecks(assessment.preferenceChecks, detail, renderState)}
+    ${renderAssessmentFindings(assessment.blockers, assessment.anomalies, assessment.questions, detail, renderState)}
     ${renderAssessmentWorkflow(detail, assessment)}
   </section>`;
+}
+
+function assessmentContextFor(assessment, context) {
+  if (!assessment || context?.status !== "ready") return undefined;
+  return context.job?.id === assessment.jobRef?.analysisId
+    && context.analysisHash === assessment.jobRef?.analysisHash
+    && context.profile?.id === assessment.profileRef?.revisionId
+    && context.profileRevisionHash === assessment.profileRef?.revisionHash
+    ? context
+    : undefined;
 }
 
 function renderAssessmentRequirements(assessment, sourceRequirements, detail, assessmentState) {
@@ -290,11 +303,11 @@ function renderAssessmentRequirements(assessment, sourceRequirements, detail, as
   const byId = new Map(sourceRequirements.map((requirement, index) => [requirement.id ?? `index-${index}`, requirement]));
   const rows = requirements.map((entry, index) => {
     const source = byId.get(entry.requirementId) ?? sourceRequirements[index];
-    const quote = source?.source?.quote ?? source?.statement ?? entry.requirementId;
+    const quote = source?.source?.quote ?? source?.statement ?? "Trích dẫn không khả dụng";
     const evidence = renderEvidenceReferences(entry.evidenceIds, detail, assessmentState);
     return `<tr><th scope="row"><span class="assessment-quote">${escapeHtml(quote)}</span><code>${escapeHtml(entry.requirementId)}</code></th><td><span class="assessment-modality">${escapeHtml(assessmentModalityLabels[entry.modality] ?? entry.modality)}</span></td><td><span class="assessment-verdict verdict-${escapeHtml(entry.verdict)}">${escapeHtml(assessmentVerdictLabels[entry.verdict] ?? entry.verdict)}</span></td><td><p>${escapeHtml(entry.explanation)}</p>${entry.question ? `<p class="assessment-question">Câu hỏi: ${escapeHtml(entry.question)}</p>` : ""}</td><td>${evidence}</td></tr>`;
   }).join("");
-  return `<section class="subsection assessment-requirements"><h3>Yêu cầu được đối chiếu</h3><div class="assessment-table-wrap"><table class="assessment-table"><caption>Yêu cầu, kết quả và bằng chứng liên quan</caption><thead><tr><th scope="col">Trích nguyên văn</th><th scope="col">Mức độ</th><th scope="col">Kết quả</th><th scope="col">Giải thích</th><th scope="col">Bằng chứng</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  return `<section class="subsection assessment-requirements"><h3>Yêu cầu được đối chiếu</h3><div class="assessment-table-wrap" tabindex="0" role="region" aria-label="Bảng bằng chứng yêu cầu; cuộn ngang để xem đầy đủ"><table class="assessment-table"><caption>Yêu cầu, kết quả và bằng chứng liên quan</caption><thead><tr><th scope="col">Trích nguyên văn</th><th scope="col">Mức độ</th><th scope="col">Kết quả</th><th scope="col">Giải thích</th><th scope="col">Bằng chứng</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 
 function renderPreferenceChecks(checks = [], detail, assessmentState) {
@@ -317,11 +330,18 @@ function renderFinding(finding, detail, assessmentState) {
 function renderEvidenceReferences(ids = [], detail, assessmentState) {
   if (!ids.length) return '<span class="muted">Không có bằng chứng được chọn</span>';
   const evidence = evidenceIndex(detail, assessmentState);
-  return `<span class="evidence-references">${ids.map((id) => { const claimPath = evidence.get(id); return `<code class="evidence-id">${escapeHtml(id)}</code>${claimPath ? ` <span class="claim-path">${escapeHtml(claimPath)}</span>` : ""}`; }).join(" · ")}</span>`;
+  return `<span class="evidence-references">${ids.map((id) => {
+    const claimPath = evidence.get(id);
+    const claimLabel = claimPath ? ` <span class="claim-path">${escapeHtml(claimPath)}</span>` : " <span class=\"claim-path\">Đường dẫn claim không khả dụng</span>";
+    return `<code class="evidence-id">${escapeHtml(id)}</code>${claimLabel}`;
+  }).join(" · ")}</span>`;
 }
 
 function evidenceIndex(detail, assessmentState) {
-  const entries = assessmentState?.evidence ?? assessmentState?.assessment?.evidence ?? assessmentState?.assessment?.evidenceById ?? detail?.profileEvidence ?? detail?.matchEvidence ?? assessmentState?.profileEvidence ?? assessmentState?.context?.profile?.claimEvidence ?? [];
+  const contextAttempted = Object.hasOwn(assessmentState ?? {}, "context");
+  const context = assessmentContextFor(assessmentState?.assessment, assessmentState?.context);
+  if (contextAttempted && !context) return new Map();
+  const entries = context?.profile?.claimEvidence ?? context?.evidence ?? assessmentState?.evidence ?? assessmentState?.assessment?.evidence ?? assessmentState?.assessment?.evidenceById ?? detail?.profileEvidence ?? detail?.matchEvidence ?? assessmentState?.profileEvidence ?? [];
   const index = new Map();
   if (Array.isArray(entries)) {
     for (const entry of entries) {

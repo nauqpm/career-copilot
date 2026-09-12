@@ -95,7 +95,7 @@ export function initializeBrowserApp(browser = globalThis) {
           // A stale assessment remains useful even when its old context cannot be reconstructed.
         }
       }
-      return { ...response, ...(context ? { context } : {}), status: response.freshness?.stale ? "stale" : "current" };
+      return { ...response, context: context ?? null, status: response.freshness?.stale ? "stale" : "current" };
     } catch (error) {
       if (error.status === 404) {
         try {

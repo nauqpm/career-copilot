@@ -179,6 +179,35 @@ test("assessment detail exposes stale reasons and blocked remediation without le
   assert.match(blocked, /Mở Codex workflow|Chạy lại đánh giá/);
 });
 
+test("stale assessments do not borrow quotes or claim paths from a changed current context", () => {
+  const base = assessmentState().assessment;
+  const detail = { ...assessmentDetail(), analysis: { ...assessmentDetail().analysis, requirements: [] } };
+  const html = renderJobDetail(detail, "", undefined, {}, undefined, {
+    status: "stale",
+    assessment: {
+      ...base,
+      jobRef: { ...base.jobRef, analysisId: "analysis-old", analysisHash: "sha256:old-analysis" },
+      profileRef: { revisionId: "profile-old", revisionHash: "sha256:old-profile" },
+      requirementAssessments: [{ requirementId: "req-old", modality: "required", verdict: "supported", explanation: "Old evidence remains readable.", evidenceIds: ["Evidence_1"] }],
+    },
+    freshness: { stale: true, reasons: ["analysis changed"] },
+    context: {
+      status: "ready",
+      analysisHash: "sha256:new-analysis",
+      profileRevisionHash: "sha256:new-profile",
+      job: { id: "analysis-new", analysis: { requirements: [{ id: "req-old", statement: "New current statement", priority: "required", source: { quote: "NEW CURRENT QUOTE" } }] } },
+      profile: { id: "profile-new", claimEvidence: [{ claimPath: "skills[changed]", evidenceIds: ["Evidence_1"] }] },
+      evidence: [{ id: "Evidence_1", claim: "Changed context evidence" }],
+    },
+  });
+
+  assert.match(html, /req-old/);
+  assert.match(html, /Evidence_1/);
+  assert.match(html, /Trích dẫn không khả dụng/);
+  assert.match(html, /Đường dẫn claim không khả dụng/);
+  assert.doesNotMatch(html, /NEW CURRENT QUOTE|skills\[changed\]|skills\[0\]/);
+});
+
 test("legacy decision is labelled only when no current assessment exists", () => {
   const detail = { ...assessmentDetail(), decision: { status: "consider", summary: "Legacy summary", matches: [], gaps: [], blockers: [], questions: [], cvDraftRecommendation: "hold" } };
   const legacy = renderJobDetail(detail);
@@ -186,6 +215,16 @@ test("legacy decision is labelled only when no current assessment exists", () =>
 
   const current = renderJobDetail(detail, "", undefined, {}, undefined, assessmentState());
   assert.doesNotMatch(current, /Đánh giá cũ — chưa khóa phiên bản/);
+});
+
+test("assessment repair keeps the legacy decision label until a readable assessment exists", () => {
+  const detail = { ...assessmentDetail(), decision: { status: "consider", summary: "Legacy summary", matches: [], gaps: [], blockers: [], questions: [], cvDraftRecommendation: "hold" } };
+  const html = renderJobDetail(detail, "", undefined, {}, undefined, {
+    status: "needs-repair",
+    remediation: [{ code: "assessment-needs-repair", message: "Repair local assessment artifacts." }],
+  });
+  assert.match(html, /Đánh giá cần khôi phục/);
+  assert.match(html, /Đánh giá cũ — chưa khóa phiên bản/);
 });
 
 test("missing assessment explains local recovery and escapes untrusted assessment text", () => {
@@ -198,4 +237,9 @@ test("missing assessment explains local recovery and escapes untrusted assessmen
   assert.match(html, /skills\/assess-job\/SKILL\.md/);
   assert.doesNotMatch(html, /<img\s|<script\s|href="javascript:/);
   assert.doesNotMatch(html, /\bApply\b|\b\d+%/);
+});
+
+test("assessment evidence matrix is a keyboard-scrollable labelled region", () => {
+  const html = renderJobDetail(assessmentDetail(), "", undefined, {}, undefined, assessmentState());
+  assert.match(html, /class="assessment-table-wrap"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-label="[^"]*bằng chứng[^"]*"/i);
 });

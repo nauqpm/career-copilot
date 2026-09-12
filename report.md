@@ -52,3 +52,37 @@ A real in-app browser exercised an isolated synthetic workspace: create two matc
 Source preservation, legacy readability, corrupt-state blocking, and pointer conflict handling remain covered by tests. No real career data was used for verification. Recovery still requires stopping writers, backing up the workspace, and restoring matching pointer/revision files together. Historical drafts are not promoted to reviewed/approved.
 
 Remote main, GitHub CI and PR state were not verified in this task. No push, merge or remote PR was performed. M4/M5, portal fetching, automatic submission, accounts, databases and agent services remain outside scope.
+
+## Task 1 — source-bound analysis revision contract (2026-09-12)
+
+Implementation is limited to the immutable parser/serializer, its focused contract tests, and the `analyze-job` skill handoff. The exact source text remains the authority: each requirement carries a locally generated safe ID and a JavaScript string-offset locator whose quote must equal `source.slice(start, end)`. The parser reuses `parseJobAnalysis` for the semantic body, verifies the source hash and capture/job binding, rejects duplicate IDs and score fields, requires truthful agent/model/prompt metadata, and verifies the lowercase SHA-256 envelope hash. Legacy flat `JobAnalysis` parsing and legacy files are unchanged; no migration, persistence, model invocation, or external action was added.
+
+### RED evidence
+
+Command:
+
+```powershell
+pnpm exec tsx --test tests/job-analysis-revisions.test.ts
+```
+
+Observed after the focused test was written and before the production module existed: **1 test file failed, 0 passed**, with the expected `ERR_MODULE_NOT_FOUND` for `src/job/analysis-revisions.js`.
+
+### GREEN and regression evidence
+
+Commands:
+
+```powershell
+pnpm exec tsx --test tests/job-analysis-revisions.test.ts tests/job-input.test.ts
+pnpm test
+pnpm build
+git diff --check
+```
+
+- Focused contract plus legacy input tests: **21 passed, 0 failed, 0 skipped** (5 contract tests and 16 existing job-input tests).
+- Registered repository suite: **217 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- Whitespace check: **passed**.
+
+### Compatibility and remaining limits
+
+Existing `JobAnalysis` validation remains the semantic compatibility layer and passes unchanged. The contract intentionally does not resolve fuzzy quotes, convert byte offsets, infer missing facts, calculate scores, assign recommendations, publish revisions, or read capture manifests from disk; those concerns remain for later bounded tasks. `manifestHash` is validated as a lowercase SHA-256 identifier here, while the publisher must bind it to the verified local manifest when persistence is added. No private career data or network provider was used.

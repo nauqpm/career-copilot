@@ -203,3 +203,25 @@ git diff --check
 - TypeScript build: **passed**; whitespace check: **passed**.
 
 The policy is intentionally structural. Its reusable coverage helper checks exact requirement ID/modality preservation when a later context/storage layer supplies the source analysis; it does not infer equivalence or recommendation outcomes. No legacy `JobDecision`, capture, profile, opportunity, or unrelated worktree bytes were changed.
+
+## Task 3 round-1 review fixes (2026-09-12)
+
+The review fixes keep match/job/requirement IDs on the lowercase reserved-safe validator while separating profile evidence IDs onto the exact existing profile namespace: `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, with `..` forbidden. Regression coverage accepts `Evidence_1` and `evidence.1` and rejects traversal-like `evidence..1`. The `assess-job` handoff now requires trusted caller-supplied producer/run metadata (`skillVersion`, `model`, and `promptHash`) alongside the locked local context, copies those values exactly into `createdBy`, and states that the validator never derives or invents them. Coverage tests now explicitly exercise missing, extra, and modality-mismatched requirement assessments through the exported helper intended for Task 4 live storage validation.
+
+### RED evidence
+
+After adding the round-1 regressions and before the evidence-validator/skill changes:
+
+```powershell
+pnpm exec .\node_modules\.bin\tsx.CMD --test tests/match-schema.test.ts
+```
+
+Result: **11 tests ran, 10 passed, 1 failed**. The expected failure was the valid `Evidence_1`/`evidence.1` namespace case being rejected by the old lowercase match-ID validator; traversal remained rejected and the coverage/metadata regressions passed against the existing helper/parser.
+
+### GREEN evidence
+
+```powershell
+pnpm exec .\node_modules\.bin\tsx.CMD --test tests/match-schema.test.ts
+```
+
+Result: **11 passed, 0 failed, 0 skipped** after the minimal separate evidence-ID validator and skill contract correction.

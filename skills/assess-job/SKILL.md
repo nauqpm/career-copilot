@@ -5,7 +5,7 @@ description: Use when a Career Copilot user explicitly asks Codex to compare one
 
 # Assess Job
 
-Consume only the generated, locked match context. The context must identify one verified job capture, one source-bound analysis revision, one published profile revision, the selected profile evidence items, and policy version `m4-v1`. Do not reread a different JD, raw profile, legacy `analysis.json`, or an unselected profile revision.
+Consume only the generated, locked match context plus trusted producer/run metadata supplied by the caller. The context must identify one verified job capture, one source-bound analysis revision, one published profile revision, the selected profile evidence items, and policy version `m4-v1`. The producer metadata must explicitly provide `skillVersion`, `model`, and `promptHash` alongside that local context; it is not derived from disk. Copy those exact caller-supplied values into `createdBy`. The local validator rejects missing or malformed metadata and never invents a model, skill version, or prompt hash. Do not reread a different JD, raw profile, legacy `analysis.json`, or an unselected profile revision.
 
 Return JSON only. Produce the `MatchAssessment` shape accepted by `parseMatchAssessment`:
 
@@ -17,9 +17,9 @@ Return JSON only. Produce the `MatchAssessment` shape accepted by `parseMatchAss
   "createdBy": {
     "kind": "agent",
     "role": "match-analyst",
-    "skillVersion": "<this skill version>",
-    "model": "<actual model label>",
-    "promptHash": "sha256:<template hash>"
+    "skillVersion": "<copy trusted producer.skillVersion>",
+    "model": "<copy trusted producer.model>",
+    "promptHash": "<copy trusted producer.promptHash>"
   },
   "contentHash": "sha256:<hash of the envelope without contentHash>",
   "jobRef": {

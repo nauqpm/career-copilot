@@ -7,6 +7,7 @@ import {
   serializeMatchAssessment,
   type MatchAssessment,
 } from "../src/match/schema.js";
+import { assertRequirementCoverage } from "../src/match/policy.js";
 
 function hash(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -174,6 +175,47 @@ test("preserves exact modality and evidence behavior without technology equivale
   assert.match(docker?.explanation ?? "", /Kubernetes is not asserted/);
 });
 
+test("accepts the existing profile evidence ID namespace without weakening traversal checks", () => {
+  const namespaced = assessment();
+  namespaced.requirementAssessments[0] = {
+    ...namespaced.requirementAssessments[0]!,
+    evidenceIds: ["Evidence_1"],
+  };
+  namespaced.requirementAssessments[1] = {
+    ...namespaced.requirementAssessments[1]!,
+    evidenceIds: ["evidence.1"],
+  };
+  assert.doesNotThrow(() => parseMatchAssessment(withContentHashWithoutStaleHash(namespaced)));
+
+  const traversal = assessment();
+  traversal.requirementAssessments[0] = {
+    ...traversal.requirementAssessments[0]!,
+    evidenceIds: ["evidence..1"],
+  };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(traversal)), /evidenceIds|identifier|safe/i);
+});
+
+test("requires complete requirement coverage with exact source modalities", () => {
+  const requirements = [
+    { id: "req-node", priority: "required" as const },
+    { id: "req-docker", priority: "preferred" as const },
+    { id: "req-kubernetes", priority: "unknown" as const },
+  ];
+  const assessments = assessment().requirementAssessments.slice(0, 3);
+  assert.doesNotThrow(() => assertRequirementCoverage(assessments, requirements));
+
+  assert.throws(() => assertRequirementCoverage(assessments.slice(0, 2), requirements), /missing requirement assessment/i);
+  assert.throws(() => assertRequirementCoverage([
+    ...assessments,
+    { requirementId: "req-extra", modality: "unknown" },
+  ], requirements), /not in the source analysis/i);
+  assert.throws(() => assertRequirementCoverage([
+    assessments[0]!,
+    { ...assessments[1]!, modality: "required" },
+    assessments[2]!,
+  ], requirements), /modality/i);
+});
+
 test("rejects duplicate requirement IDs and unsupported modalities", () => {
   const duplicate = assessment();
   duplicate.requirementAssessments[1] = {
@@ -241,6 +283,14 @@ test("rejects scores, legacy CV authority, wrong policy and malformed creator me
   const missingModel = assessment();
   missingModel.createdBy = { ...missingModel.createdBy, model: "" };
   assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(missingModel)), /createdBy\.model/i);
+
+  const missingSkillVersion = assessment();
+  missingSkillVersion.createdBy = { ...missingSkillVersion.createdBy, skillVersion: "" };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(missingSkillVersion)), /createdBy\.skillVersion/i);
+
+  const missingPromptHash = assessment();
+  missingPromptHash.createdBy = { ...missingPromptHash.createdBy, promptHash: "" };
+  assert.throws(() => parseMatchAssessment(withContentHashWithoutStaleHash(missingPromptHash)), /createdBy\.promptHash/i);
 });
 
 test("rejects reserved IDs, calendar-overflow UTC timestamps and changed content hashes", () => {

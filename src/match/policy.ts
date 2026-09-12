@@ -35,6 +35,13 @@ export function isSafeMatchId(value: unknown): value is string {
     && !RESERVED_MATCH_IDS.includes(value.trim() as (typeof RESERVED_MATCH_IDS)[number]);
 }
 
+/** Profile evidence keeps its existing mixed-case, dot, underscore and hyphen namespace. */
+export function isSafeEvidenceId(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const id = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes("..");
+}
+
 export function isSha256(value: unknown): value is string {
   return typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value.trim());
 }

@@ -4,6 +4,7 @@ import {
   CONFIDENCE_LEVELS,
   isPreferenceEvidenceRequired,
   isRequirementEvidenceRequired,
+  isSafeEvidenceId,
   isSafeMatchId,
   isSha256,
   isStrictUtcTimestamp,
@@ -269,9 +270,14 @@ function parseQuestions(value: unknown): Question[] {
 
 function parseEvidenceIds(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
-  const ids = value.map((entry, index) => safeId(entry, `${field}[${index}]`));
+  const ids = value.map((entry, index) => safeEvidenceId(entry, `${field}[${index}]`));
   if (new Set(ids).size !== ids.length) throw new Error(`${field} must not contain duplicate IDs`);
   return ids;
+}
+
+function safeEvidenceId(value: unknown, field: string): string {
+  if (!isSafeEvidenceId(value)) throw new Error(`${field} must be a safe evidence identifier`);
+  return value.trim();
 }
 
 function safeId(value: unknown, field: string): string {

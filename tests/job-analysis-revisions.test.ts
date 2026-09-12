@@ -147,6 +147,11 @@ test("rejects mismatched capture binding and malformed IDs or timestamps", () =>
   assert.throws(() => parseJobAnalysisRevision(revision({ analysis: { ...revision().analysis, requirements: [{ ...revision().analysis.requirements[0], priority: "mandatory" }] } }), source), /priority/);
 });
 
+test("rejects calendar-overflow UTC timestamps", () => {
+  const overflow = revision({ createdAt: "2026-02-30T05:00:00.000Z" });
+  assert.throws(() => parseJobAnalysisRevision(overflow, source), /createdAt/);
+});
+
 test("requires truthful model and prompt metadata", () => {
   const missingModel = revision({ createdBy: { ...revision().createdBy, model: "" } });
   assert.throws(() => parseJobAnalysisRevision(missingModel, source), /createdBy.model/);

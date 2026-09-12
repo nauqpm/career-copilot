@@ -86,3 +86,14 @@ git diff --check
 ### Compatibility and remaining limits
 
 Existing `JobAnalysis` validation remains the semantic compatibility layer and passes unchanged. The contract intentionally does not resolve fuzzy quotes, convert byte offsets, infer missing facts, calculate scores, assign recommendations, publish revisions, or read capture manifests from disk; those concerns remain for later bounded tasks. `manifestHash` is validated as a lowercase SHA-256 identifier here, while the publisher must bind it to the verified local manifest when persistence is added. No private career data or network provider was used.
+
+### Task 1 review fix — strict UTC calendar validation (2026-09-12)
+
+Round-1 review found that `Date.parse` accepts calendar-overflow timestamps such as `2026-02-30T05:00:00Z` and normalises them to `2026-03-02T05:00:00.000Z`. The regression test was added before the fix and produced **5 passed, 1 failed** with `AssertionError: Missing expected exception.` The validator now parses each UTC date/time component, round-trips it through `Date#setUTCFullYear`/`setUTCHours`, and rejects any overflow while retaining the RFC3339 UTC shape check.
+
+Fix verification:
+
+- `pnpm exec tsx --test tests/job-analysis-revisions.test.ts tests/job-input.test.ts`: **22 passed, 0 failed, 0 skipped**.
+- `pnpm test`: **217 passed, 0 failed, 0 skipped**.
+- `pnpm build`: **passed**.
+- `git diff --check`: **passed**.

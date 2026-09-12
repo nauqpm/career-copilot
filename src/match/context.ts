@@ -47,12 +47,25 @@ const safeAnalysisIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const safeProfileIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const safeEvidenceIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
+class ProfileRevisionUnavailableError extends Error {}
+
+export function isSafeMatchJobId(value: unknown): value is string {
+  return typeof value === "string" && safeJobIdPattern.test(value);
+}
+
+export function isSafeMatchProfileRevisionId(value: unknown): value is string {
+  return typeof value === "string"
+    && value === value.trim()
+    && safeProfileIdPattern.test(value)
+    && !value.includes("..");
+}
+
 /**
  * Load a capture only when source.md, source.json and raw.json still agree.
  * The returned hashes are hashes of the exact bytes on disk.
  */
 export async function readVerifiedMatchCapture(root: string, jobId: string): Promise<VerifiedMatchCapture> {
-  if (!safeJobIdPattern.test(jobId)) throw new Error("job id is invalid");
+  if (!isSafeMatchJobId(jobId)) throw new Error("job id is invalid");
 
   const directory = resolve(root, "data", "jobs", jobId);
   await assertSafePath(directory);
@@ -123,11 +136,11 @@ export async function readExactMatchAnalysis(root: string, jobId: string, analys
 }
 
 export async function readExactMatchProfile(root: string, revisionId: string): Promise<ExactMatchProfile> {
-  const normalizedId = revisionId.trim();
-  if (!safeProfileIdPattern.test(normalizedId) || normalizedId.includes("..")) throw new Error("profile revision ID is invalid");
+  if (!isSafeMatchProfileRevisionId(revisionId)) throw new Error("profile revision ID is invalid");
+  const normalizedId = revisionId;
   const path = join(resolve(root, "data", "profile", "revisions"), `${normalizedId}.json`);
   const artifact = await readArtifact(path);
-  if (artifact === undefined) throw new Error("Profile revision is missing");
+  if (artifact === undefined) throw new ProfileRevisionUnavailableError("Profile revision is missing");
 
   let value: unknown;
   try {
@@ -142,6 +155,11 @@ export async function readExactMatchProfile(root: string, revisionId: string): P
 }
 
 export async function readMatchContext(root: string, jobId: string, profileRevisionId?: string): Promise<MatchContext | MatchBlocked> {
+  if (!isSafeMatchJobId(jobId)) throw new Error("job id is invalid");
+  if (profileRevisionId !== undefined && !isSafeMatchProfileRevisionId(profileRevisionId)) {
+    throw new Error("profile revision ID is invalid");
+  }
+
   let analysis: Awaited<ReturnType<typeof readCurrentAnalysis>>;
   try {
     analysis = await readCurrentAnalysis(root, jobId);
@@ -157,12 +175,19 @@ export async function readMatchContext(root: string, jobId: string, profileRevis
     profile = profileRevisionId === undefined
       ? await readCurrentPublishedProfile(root)
       : await readExactMatchProfile(root, profileRevisionId);
-  } catch {
+  } catch (error) {
+    const unavailable = error instanceof ProfileRevisionUnavailableError;
     return blocked(
-      profileRevisionId === undefined ? "profile-unpublished-or-needs-repair" : "profile-revision-unavailable",
       profileRevisionId === undefined
-        ? "Publish a valid candidate profile revision, or repair its referenced evidence, before matching this job."
-        : "The requested profile revision or its evidence is missing or corrupt; choose an existing published revision explicitly.",
+        ? unavailable ? "profile-unpublished" : "profile-needs-repair"
+        : unavailable ? "profile-revision-unavailable" : "profile-revision-needs-repair",
+      profileRevisionId === undefined
+        ? unavailable
+          ? "Publish a valid candidate profile revision before matching this job."
+          : "The current candidate profile revision or its evidence needs repair before matching this job."
+        : unavailable
+          ? "The requested profile revision is unavailable; choose an existing published revision explicitly."
+          : "The requested profile revision or its evidence needs repair before matching this job.",
     );
   }
 
@@ -185,7 +210,7 @@ export async function readMatchContext(root: string, jobId: string, profileRevis
 export async function readCurrentPublishedProfile(root: string): Promise<ExactMatchProfile> {
   const snapshot = await readProfileSnapshot(root);
   if (snapshot.legacy || snapshot.revision === undefined || snapshot.hash === null) {
-    throw new Error("A published profile revision is required");
+    throw new ProfileRevisionUnavailableError("A published profile revision is required");
   }
   return { revision: snapshot.revision, revisionHash: snapshot.hash };
 }

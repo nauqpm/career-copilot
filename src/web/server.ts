@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -7,10 +7,10 @@ import { readProfileHistory, readProfileSnapshot, publishProfileRevision, savePr
 import { parseCandidateProfile } from "../profile/schema.js";
 import { parseEvidenceDraft, type EvidenceDraft } from "../profile/evidence.js";
 import { parseProfileRevision } from "../profile/versions.js";
-import { contentHash, ConflictError, readArtifact } from "../workspace/artifacts.js";
+import { assertSafePath, contentHash, ConflictError, readArtifact } from "../workspace/artifacts.js";
 import { workspacePrivacyWarnings } from "../workspace/privacy.js";
 import { assessmentFreshness, readCurrentMatch, readMatchHistory } from "../match/storage.js";
-import { readMatchContext } from "../match/context.js";
+import { isSafeMatchJobId, isSafeMatchProfileRevisionId, readMatchContext } from "../match/context.js";
 import { parseMatchAssessment } from "../match/schema.js";
 import {
   createPastedJob,
@@ -155,8 +155,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       const profileRevision = requestedProfileRevision(url);
       const context = await readMatchContext(root, jobId, profileRevision);
       if (context.status === "blocked") {
-        const repair = context.remediation.some((item) => item.code === "capture-or-analysis-needs-repair" || item.code === "profile-evidence-needs-repair");
-        return sendJson(response, repair ? 409 : 200, context);
+        const repair = context.remediation.some((item) => item.code.endsWith("-needs-repair"));
+        return sendJson(response, repair ? 409 : 200, repair ? { error: "Assessment data needs repair before it can be read." } : context);
       }
       return sendJson(response, 200, context);
     }
@@ -368,20 +368,26 @@ function decodePathSegment(value: string): string {
 function requestedProfileRevision(url: URL): string | undefined {
   const values = url.searchParams.getAll("profileRevision");
   if (values.length === 0) return undefined;
-  if (values.length !== 1 || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(values[0]!) || values[0]!.includes("..")) {
+  if (values.length !== 1 || !isSafeMatchProfileRevisionId(values[0])) {
     throw new InputError("The supplied local data is invalid.");
   }
   return values[0];
 }
 
 async function requireMatchJob(root: string, jobId: string): Promise<void> {
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(jobId)) throw new MatchMissingError();
+  if (!isSafeMatchJobId(jobId)) throw new MatchMissingError();
+  const directory = join(resolve(root), "data", "jobs", jobId);
   try {
-    if (await readArtifact(join(resolve(root), "data", "jobs", jobId, "raw.json"))) return;
+    await assertSafePath(directory);
+    const info = await stat(directory);
+    if (!info.isDirectory()) throw new MatchRepairError("match job directory is invalid");
+    if (await readArtifact(join(directory, "raw.json"))) return;
+    throw new MatchRepairError("match job capture is incomplete");
   } catch (error) {
+    if (error instanceof MatchMissingError || error instanceof MatchRepairError) throw error;
+    if (isCode(error, "ENOENT")) throw new MatchMissingError();
     throw new MatchRepairError(error instanceof Error ? error.message : "match job cannot be read");
   }
-  throw new MatchMissingError();
 }
 
 async function readCurrentMatchOrRepair(root: string, jobId: string) {
@@ -405,6 +411,10 @@ function matchAssessmentPath(root: string, jobId: string, assessmentId: string):
     throw new MatchMissingError();
   }
   return join(resolve(root), "data", "jobs", jobId, "assessments", `${assessmentId}.json`);
+}
+
+function isCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 async function profileSnapshot(root: string) {

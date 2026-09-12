@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -276,4 +276,79 @@ test("match-context keeps an ordinary unpublished preflight block as a readable 
   } finally {
     await app.close();
   }
+});
+
+test("match-context maps corrupt current and explicit profile data to generic repair", async () => {
+  const state = await fixture();
+  const profilePath = join(state.root, "data", "profile", "revisions", `${state.publishedProfile.revision.id}.json`);
+  const currentPath = join(state.root, "data", "profile", "current.json");
+  const profileBytes = await readFile(profilePath, "utf8");
+  const app = await startTestServer(state.root);
+
+  try {
+    const unavailable = await fetch(`${app.url}/api/jobs/${state.job.id}/match-context?profileRevision=profile-missing`);
+    assert.equal(unavailable.status, 200);
+    const unavailableBody = await unavailable.json() as { status: string; remediation: Array<{ code: string }> };
+    assert.equal(unavailableBody.status, "blocked");
+    assert.ok(unavailableBody.remediation.some((item) => item.code === "profile-revision-unavailable"));
+
+    await writeFile(profilePath, "{broken profile\n", "utf8");
+    const explicit = await fetch(`${app.url}/api/jobs/${state.job.id}/match-context?profileRevision=${encodeURIComponent(state.publishedProfile.revision.id)}`);
+    assert.equal(explicit.status, 409);
+    assert.deepEqual(await explicit.json(), { error: "Assessment data needs repair before it can be read." });
+
+    await writeFile(profilePath, profileBytes, "utf8");
+    await writeFile(currentPath, "{broken pointer\n", "utf8");
+    const current = await fetch(`${app.url}/api/jobs/${state.job.id}/match-context`);
+    assert.equal(current.status, 409);
+    const currentBody = await current.json() as { error: string };
+    assert.deepEqual(currentBody, { error: "Assessment data needs repair before it can be read." });
+    assert.doesNotMatch(JSON.stringify(currentBody), /career-m4-flow|profile|source\.md/i);
+  } finally {
+    await app.close();
+  }
+});
+
+test("match routes classify an existing partial job as repair and a missing job as absent", async () => {
+  const state = await fixture();
+  await unlink(join(state.directory, "raw.json"));
+  const app = await startTestServer(state.root);
+
+  try {
+    const paths = [
+      `/api/jobs/${state.job.id}/match-context`,
+      `/api/jobs/${state.job.id}/assessments`,
+      `/api/jobs/${state.job.id}/assessments/current`,
+      `/api/jobs/${state.job.id}/assessments/assessment-one`,
+    ];
+    for (const path of paths) {
+      const response = await fetch(`${app.url}${path}`);
+      assert.equal(response.status, 409, path);
+      assert.deepEqual(await response.json(), { error: "Assessment data needs repair before it can be read." }, path);
+    }
+
+    const missing = await fetch(`${app.url}/api/jobs/${state.job.id}-missing/assessments/current`);
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: "Not found" });
+  } finally {
+    await app.close();
+  }
+});
+
+test("match context CLI rejects unsafe job and profile revision IDs", async () => {
+  const state = await fixture();
+  const unsafeJob = io();
+  const unsafeJobCode = await runCli(["match", "context", "../outside", "--root", state.root], unsafeJob.value);
+  assert.equal(unsafeJobCode, 1);
+  assert.equal(unsafeJob.stdout.join(""), "");
+  assert.match(unsafeJob.stderr.join(""), /invalid/i);
+
+  const unsafeProfile = io();
+  const unsafeProfileCode = await runCli(
+    ["match", "context", state.job.id, "--root", state.root, "--profile-revision", "../outside"],
+    unsafeProfile.value,
+  );
+  assert.equal(unsafeProfileCode, 1);
+  assert.equal(unsafeProfile.stdout.join(""), "");
+  assert.match(unsafeProfile.stderr.join(""), /invalid/i);
 });

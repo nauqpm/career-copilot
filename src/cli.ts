@@ -11,7 +11,7 @@ import { parseCandidateProfile } from "./profile/schema.js";
 import { publishProfileRevision } from "./profile/storage.js";
 import { parseJobDecision } from "./decision/schema.js";
 import { readAnalysisContext, publishAnalysisRevision } from "./job/analysis-storage.js";
-import { readMatchContext } from "./match/context.js";
+import { isSafeMatchJobId, isSafeMatchProfileRevisionId, readMatchContext } from "./match/context.js";
 import { parseMatchAssessment } from "./match/schema.js";
 import { saveMatchAssessment } from "./match/storage.js";
 import { writeArtifact } from "./workspace/artifacts.js";
@@ -159,9 +159,13 @@ async function publishAnalysis(jobId: string | undefined, options: string[], io:
 
 async function matchContext(jobId: string | undefined, options: string[], io: CliIo): Promise<number> {
   if (!jobId) throw new Error("Job ID is required");
+  if (!isSafeMatchJobId(jobId)) throw new Error("Job ID is invalid");
   const root = optionValue(options, "--root");
   if (!root) throw new Error("--root is required to read match context");
   const profileRevision = optionValue(options, "--profile-revision");
+  if (profileRevision !== undefined && !isSafeMatchProfileRevisionId(profileRevision)) {
+    throw new Error("Profile revision ID is invalid");
+  }
   io.writeStdout(serializeJson(await readMatchContext(resolve(root), jobId, profileRevision)));
   return 0;
 }

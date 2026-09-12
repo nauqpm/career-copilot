@@ -323,3 +323,33 @@ git diff --check
 - `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
 
 Coverage includes ready and blocked context, exact profile-revision selection, structural validation without writes, optimistic publish conflict with unchanged current pointer, URL-decoded safe IDs, malformed profile-revision query rejection, quoted ETags for pointer/artifact reads, freshness output, absent assessment 404s, repair 409s, non-leaking generic errors, and additive workspace assessment status/history. Synthetic temporary workspaces only; no private career data or provider invocation was used. Existing legacy artifact bodies, M3 grouping fields and source bytes remain unchanged.
+
+## Task 5 round-1 fix — classify assessment repair states (2026-09-12)
+
+The review text in the task report is preserved. This fix distinguishes valid-but-unpublished or unknown profile input from corrupted current/explicit profile revisions and evidence: ordinary unavailable states remain readable as `200` blocked context, while repair states return the generic `409` assessment-repair envelope. Existing incomplete job directories (for example, source files written before `raw.json`) now return `409` repair across the match routes; genuinely missing job directories remain `404`. The CLI shares namespace-specific job/profile revision validators and rejects unsafe IDs with a nonzero exit before local reads.
+
+### RED evidence
+
+```powershell
+.\\node_modules\\.bin\\tsx.CMD --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
+```
+
+The authorized local runtime reproduced the three review findings: **30 tests ran, 27 passed, 3 failed** before the production fix.
+
+### GREEN and verification evidence
+
+```powershell
+.\\node_modules\\.bin\\tsx.CMD --test tests/m4-matching-flow.test.ts tests/workspace.test.ts
+$testFiles = @(rg --files tests -g '*.test.ts'); & '.\\node_modules\\.bin\\tsx.CMD' --test $testFiles
+npm run build
+git diff --check
+pnpm audit --audit-level=high
+```
+
+- Focused regression suite: **30 passed, 0 failed, 0 skipped**.
+- Complete test tree: **268 passed, 0 failed, 0 skipped**.
+- TypeScript build: **passed**.
+- `git diff --check`: **passed**.
+- `pnpm audit --audit-level=high`: **no known vulnerabilities found**.
+
+The direct sandboxed Node launcher remains blocked by the known Windows `EPERM: operation not permitted, lstat 'C:\\Users\\quanp'` boundary, so the authorized local runtime supplied the test evidence. Unrelated untracked artifacts were preserved.
